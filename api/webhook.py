@@ -12,9 +12,14 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
-import config
-import database
-from ai_parser import GeminiParser, RuleEngine, rules_mgr
+STARTUP_ERROR = None
+try:
+    import config
+    import database
+    from ai_parser import GeminiParser, RuleEngine, rules_mgr
+except Exception:
+    STARTUP_ERROR = traceback.format_exc()
+    print(f"FATAL STARTUP ERROR: {STARTUP_ERROR}")
 
 ssl_ctx = ssl.create_default_context()
 
@@ -355,6 +360,8 @@ def application(environ, start_response):
         method = environ.get("REQUEST_METHOD", "GET").upper()
         if method == "GET":
             start_response("200 OK", [("Content-Type", "text/plain; charset=utf-8")])
+            if STARTUP_ERROR:
+                return [f"⚠️ Startup Error on Vercel:\n{STARTUP_ERROR}".encode("utf-8")]
             return ["🚀 AutoAccounting Webhook is live and running on Vercel!".encode("utf-8")]
 
         if method == "POST":
@@ -389,7 +396,10 @@ class handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.end_headers()
-        self.wfile.write("🚀 AutoAccounting Webhook is live and running on Vercel!".encode("utf-8"))
+        if STARTUP_ERROR:
+            self.wfile.write(f"⚠️ Startup Error on Vercel:\n{STARTUP_ERROR}".encode("utf-8"))
+        else:
+            self.wfile.write("🚀 AutoAccounting Webhook is live and running on Vercel!".encode("utf-8"))
 
     def do_POST(self):
         try:

@@ -3,6 +3,11 @@ name = "auto-accounting"
 version = "1.0.0"
 description = "AutoAccounting - Trợ lý Kế toán Nha khoa"
 requires-python = ">=3.10"
+dependencies = [
+    "python-dotenv>=1.0.0",
+    "openpyxl>=3.1.0",
+    "requests>=2.31.0"
+]
 
 [tool.vercel]
 entrypoint = "api.webhook:app"

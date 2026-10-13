@@ -1,12 +1,13 @@
 import os
 from pathlib import Path
-from dotenv import load_dotenv
-
 # Base directory
 BASE_DIR = Path(__file__).resolve().parent
 
-# Load .env file
-load_dotenv(BASE_DIR / ".env")
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / ".env")
+except Exception:
+    pass
 
 # Gemini API Keys (loaded from .env)
 GEMINI_API_KEY_PRIMARY = os.getenv("GEMINI_API_KEY_PRIMARY", "") or os.getenv("GEMINI_API_KEY", "")
