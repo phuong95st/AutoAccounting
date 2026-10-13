@@ -23,10 +23,15 @@ GEMINI_MODELS = [
 # Telegram Bot Token
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
+# Google Sheets Integration
+GOOGLE_SHEETS_WEBHOOK_URL = os.getenv("GOOGLE_SHEETS_WEBHOOK_URL", "")
+GOOGLE_SHEETS_URL = os.getenv("GOOGLE_SHEETS_URL", "")
+
 # Optional allowed Telegram user IDs (comma separated string)
 ALLOWED_TELEGRAM_USERS = [
     int(uid.strip()) for uid in os.getenv("ALLOWED_TELEGRAM_USERS", "").split(",") if uid.strip().isdigit()
 ]
+
 
 # Paths
 DATA_DIR = BASE_DIR / "data"

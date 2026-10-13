@@ -103,10 +103,31 @@ Gửi file Excel/CSV sao kê ngân hàng vào bot, hệ thống sẽ tự độn
 ### 5. Các lệnh báo cáo & quản trị:
 * `/today` hoặc `/ngay`: Xem tổng kết thu - chi - chênh lệch hôm nay.
 * `/thang` hoặc `/baocao`: Xem báo cáo doanh thu, chi phí, lợi nhuận tháng này.
+* `/sheet` hoặc `/link`: Mở trực tiếp bảng tính Google Sheets online trên điện thoại.
 * `/excel`: Xuất file Excel báo cáo hoàn chỉnh tải về máy.
 * `/ds`: Xem danh sách 10 giao dịch gần nhất kèm mã ID.
 * `/xoa <id>`: Xóa giao dịch nếu lỡ tay nhập nhầm (Ví dụ: `/xoa 5`).
 * `/hoc <từ khóa> = <thu/chi>: <danh mục>`: Dạy cho AI nhận diện từ mới (Ví dụ: `/hoc cafe = chi: Chi phí Tâm linh & Sinh hoạt`).
+
+---
+
+## 📊 Hướng Dẫn Kết Nối Google Sheets Online (Real-Time)
+
+Nếu bạn muốn mỗi khi chat vào Telegram, dữ liệu lập tức xuất hiện trên bảng tính Google Sheets:
+
+1. Tạo một file Google Sheets mới trên Google Drive (Ví dụ: `Sổ Quỹ Nha Khoa`).
+2. Trong Google Sheets, chọn menu **Tiện ích mở rộng (Extensions)** ➡️ **Apps Script**.
+3. Xóa nội dung mặc định, copy toàn bộ nội dung file [`google_sheets_script.js`](file:///D:/03.Work/AutoAccounting/google_sheets_script.js) dán vào và bấm **Lưu**.
+4. Bấm **Triển khai (Deploy)** ➡️ **Tùy chọn triển khai mới (New deployment)**:
+   - Chọn loại: **Ứng dụng web (Web app)**
+   - Thực thi dưới dạng: **Tôi (Me)**
+   - Người có quyền truy cập: **Bất kỳ ai (Anyone)**
+   - Bấm **Triển khai**, cấp quyền và copy chuỗi **URL ứng dụng web** (dạng `https://script.google.com/macros/s/.../exec`).
+5. Dán URL này vào biến `GOOGLE_SHEETS_WEBHOOK_URL` trong file `.env`.
+6. Dán link xem trang tính vào `GOOGLE_SHEETS_URL` trong file `.env`.
+
+Từ giờ, mọi giao dịch bạn nhắn trên Telegram sẽ được tự động điền ngay 1 dòng vào Google Sheets!
+
 
 ---
 

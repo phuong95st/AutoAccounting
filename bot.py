@@ -15,8 +15,10 @@ from telegram.ext import (
 
 import config
 import database
+import google_sheets
 from ai_parser import GeminiParser, RuleEngine, rules_mgr
 from bank_reconciler import BankStatementParser, ReportGenerator
+
 
 # Setup logging
 logging.basicConfig(
@@ -204,6 +206,22 @@ async def cmd_teach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Lỗi cú pháp: {e}")
 
+async def cmd_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send link to online Google Sheets."""
+    url = config.GOOGLE_SHEETS_URL
+    if url:
+        msg = (
+            f"📊 *BẢNG TÍNH GOOGLE SHEETS SỔ QUỸ*\n\n"
+            f"🔗 Bấm vào link dưới đây để mở xem trực tiếp trên iPhone:\n"
+            f"[👉 Mở Google Sheets Sổ Quỹ]({url})"
+        )
+    else:
+        msg = (
+            "ℹ️ *Chưa gắn link Google Sheets trong file .env!*\n\n"
+            "Bạn hãy dán link bảng tính vào biến `GOOGLE_SHEETS_URL` trong file `.env` để xem nhanh nhé."
+        )
+    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle text input from user (e.g. '+ 500k tram rang', '- 70k hoa qua')."""
     user_id = update.effective_user.id
@@ -227,6 +245,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Save to database
+    now = datetime.now()
     tx_id = database.add_transaction(
         tx_type=parsed["type"],
         amount=parsed["amount"],
@@ -236,6 +255,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         source="telegram",
         user_id=user_id
     )
+
+    # Sync to Google Sheets Real-Time
+    google_sheets.sync_transaction_async({
+        "id": tx_id,
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M:%S"),
+        "type": parsed["type"],
+        "amount": parsed["amount"],
+        "category": parsed["category"],
+        "description": parsed.get("description", ""),
+        "payment_method": parsed.get("payment_method", "cash"),
+        "source": "telegram"
+    })
+
 
     is_thu = parsed["type"] == "thu"
     sign_text = "🟢 THU VÀO" if is_thu else "🔴 CHI RA"
@@ -284,6 +317,19 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id=user_id
         )
 
+        now = datetime.now()
+        google_sheets.sync_transaction_async({
+            "id": tx_id,
+            "date": now.strftime("%Y-%m-%d"),
+            "time": now.strftime("%H:%M:%S"),
+            "type": parsed.get("type", "chi"),
+            "amount": parsed["amount"],
+            "category": parsed["category"],
+            "description": parsed.get("description", "Hóa đơn chụp"),
+            "payment_method": parsed.get("payment_method", "cash"),
+            "source": "ocr"
+        })
+
         msg = (
             f"🧾 *ĐÃ QUÉT VÀ LƯU HÓA ĐƠN #{tx_id}*\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -329,9 +375,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_in = 0
         total_out = 0
         saved_count = 0
+        synced_items = []
 
         for it in items:
-            database.add_transaction(
+            new_id = database.add_transaction(
                 tx_type=it["type"],
                 amount=it["amount"],
                 category=it["category"],
@@ -342,10 +389,15 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 tx_date=it["date"] if it.get("date") else None
             )
             saved_count += 1
+            it["id"] = new_id
+            synced_items.append(it)
             if it["type"] == "thu":
                 total_in += it["amount"]
             else:
                 total_out += it["amount"]
+
+        # Batch sync to Google Sheets
+        google_sheets.sync_batch_async(synced_items)
 
         # Clean up temporary file
         try:
@@ -373,6 +425,7 @@ async def post_init(application: Application):
         BotCommand("help", "Xem hướng dẫn sử dụng chi tiết"),
         BotCommand("today", "Báo cáo thu chi hôm nay"),
         BotCommand("thang", "Báo cáo tài chính tháng này"),
+        BotCommand("sheet", "Mở Google Sheets online"),
         BotCommand("excel", "Xuất file Excel báo cáo chi tiết"),
         BotCommand("ds", "Xem 10 giao dịch gần nhất"),
         BotCommand("xoa", "Xóa giao dịch nhập nhầm (/xoa <id>)"),
@@ -397,7 +450,6 @@ def main():
     print("🚀 Khởi động AutoAccounting Telegram Bot...")
     app = Application.builder().token(token).post_init(post_init).build()
 
-
     # Commands
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
@@ -405,12 +457,16 @@ def main():
     app.add_handler(CommandHandler("ngay", cmd_today))
     app.add_handler(CommandHandler("thang", cmd_month))
     app.add_handler(CommandHandler("baocao", cmd_month))
+    app.add_handler(CommandHandler("sheet", cmd_sheet))
+    app.add_handler(CommandHandler("link", cmd_sheet))
     app.add_handler(CommandHandler("excel", cmd_excel))
     app.add_handler(CommandHandler("xuat", cmd_excel))
     app.add_handler(CommandHandler("ds", cmd_recent))
     app.add_handler(CommandHandler("xoa", cmd_delete))
     app.add_handler(CommandHandler("hoc", cmd_teach))
     app.add_handler(CommandHandler("rule", cmd_teach))
+
+
 
     # Messages
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
