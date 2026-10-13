@@ -5,4 +5,4 @@ description = "AutoAccounting - Trợ lý Kế toán Nha khoa"
 requires-python = ">=3.10"
 
 [tool.vercel]
-entrypoint = "api.webhook:handler"
+entrypoint = "api.webhook:app"

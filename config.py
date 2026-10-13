@@ -35,9 +35,17 @@ ALLOWED_TELEGRAM_USERS = [
 
 # Paths
 DATA_DIR = BASE_DIR / "data"
-REPORTS_DIR = BASE_DIR / "reports"
+# On Vercel serverless, root filesystem is read-only, only /tmp is writable
+REPORTS_DIR = Path("/tmp") if os.environ.get("VERCEL") else (BASE_DIR / "reports")
 RULES_PATH = DATA_DIR / "skills_and_rules.json"
 
-DATA_DIR.mkdir(exist_ok=True)
-REPORTS_DIR.mkdir(exist_ok=True)
+try:
+    DATA_DIR.mkdir(exist_ok=True)
+except Exception:
+    pass
+
+try:
+    REPORTS_DIR.mkdir(exist_ok=True)
+except Exception:
+    pass
 
