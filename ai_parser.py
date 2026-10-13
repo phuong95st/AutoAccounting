@@ -64,8 +64,38 @@ class RulesManager:
 rules_mgr = RulesManager(RULES_PATH)
 
 
+import unicodedata
+
+def remove_accents(input_str: str) -> str:
+    """Normalize Vietnamese accents to plain characters."""
+    s = unicodedata.normalize('NFD', input_str)
+    s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
+    return s.replace('đ', 'd').replace('Đ', 'D')
+
+
 class RuleEngine:
     """Fallback Rule-based parser using regular expressions and domain dictionary."""
+
+    @staticmethod
+    def normalize_typos(text: str) -> str:
+        t = text.lower()
+        # Common Vietnamese typing/teencode/slang typos
+        typos = {
+            r'\bwa\b': 'qua',
+            r'\bran\b': 'rang',
+            r'\bran su\b': 'rang su',
+            r'\brăn\b': 'rang',
+            r'\brang\b': 'rang',
+            r'\bhuog\b': 'huong',
+            r'\bkhug\b': 'khung',
+            r'\bck\b': 'chuyen khoan',
+            r'\btk\b': 'tai khoan',
+            r'\bmat\b': 'tien mat',
+            r'\btm\b': 'tien mat',
+        }
+        for pat, rep in typos.items():
+            t = re.sub(pat, rep, t)
+        return t
 
     @staticmethod
     def parse_amount(text: str) -> Optional[int]:
@@ -106,16 +136,27 @@ class RuleEngine:
     def parse(cls, text: str) -> Optional[Dict[str, Any]]:
         raw_text = text.strip()
         text_lower = raw_text.lower()
+        text_norm = cls.normalize_typos(text_lower)
+        text_unaccent = remove_accents(text_norm)
 
         # Determine type
         tx_type = None
-        if text_lower.startswith("+") or " thu " in f" {text_lower} " or text_lower.startswith("thu ") or "khách trả" in text_lower or "khach tra" in text_lower:
+        if (text_lower.startswith("+") or 
+            " thu " in f" {text_lower} " or 
+            text_lower.startswith("thu ") or 
+            "khách trả" in text_lower or 
+            "khach tra" in text_unaccent or
+            "benh nhan tra" in text_unaccent):
             tx_type = "thu"
-        elif text_lower.startswith("-") or " chi " in f" {text_lower} " or text_lower.startswith("chi ") or "trả tiền" in text_lower or "mua " in text_lower:
+        elif (text_lower.startswith("-") or 
+              " chi " in f" {text_lower} " or 
+              text_lower.startswith("chi ") or 
+              "trả tiền" in text_lower or 
+              "mua " in text_lower or
+              "tra tien" in text_unaccent):
             tx_type = "chi"
         else:
-            # Default to chi if negative vibe, or check keywords
-            tx_type = "chi" if any(w in text_lower for w in ["mua", "trả", "tiêu", "hết", "chi"]) else "thu"
+            tx_type = "chi" if any(w in text_unaccent for w in ["mua", "tra", "tieu", "het", "chi"]) else "thu"
 
         # Extract amount
         amount = cls.parse_amount(text_lower)
@@ -130,7 +171,8 @@ class RuleEngine:
         # Check learned rules first
         category = None
         for lr in rules_mgr.rules.get("learned_rules", []):
-            if lr["keyword"].lower() in text_lower:
+            kw_norm = remove_accents(lr["keyword"].lower())
+            if kw_norm in text_unaccent or lr["keyword"].lower() in text_lower:
                 category = lr["category"]
                 if not tx_type:
                     tx_type = lr["type"]
@@ -141,11 +183,13 @@ class RuleEngine:
             cat_list = rules_mgr.rules.get("categories", {}).get(tx_type, [])
             for cat in cat_list:
                 for kw in cat.get("keywords", []):
-                    if kw.lower() in text_lower:
+                    kw_clean = remove_accents(kw.lower())
+                    if kw_clean in text_unaccent or kw.lower() in text_lower:
                         category = cat["name"]
                         break
                 if category:
                     break
+
 
         if not category:
             category = "Doanh thu Dịch vụ" if tx_type == "thu" else "Chi khác"
