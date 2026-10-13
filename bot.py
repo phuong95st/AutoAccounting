@@ -40,23 +40,25 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     msg = (
         f"👋 *Xin chào {user.first_name}! Tôi là Trợ Lý Kế Toán Phòng Khám Nha Khoa.*\n\n"
-        "💡 *CÁCH SỬ DỤNG NHANH HÀNG NGÀY:*\n"
-        "Nhập dòng tiền cực nhanh trong 3 giây:\n"
+        "💡 *CÁCH GHI THU CHI NHANH (3 GIÂY):*\n"
+        "Bạn chỉ cần gõ nội dung thu chi tự nhiên hoặc gửi ảnh:\n"
         "• `+ 500k khach tram rang` ➡️ Thu tiền mặt\n"
         "• `+ 2tr ck khach Trang boc rang su` ➡️ Khách chuyển khoản\n"
-        "• `- 70k hoa qua thap huong` ➡️ Chi tiền mặt mua hoa quả\n"
-        "• `- 1.2tr labo rang su chi Nga` ➡️ Chi tiền làm labo\n"
+        "• `- 70k hoa qua thap huong` ➡️ Chi tiền mua hoa quả\n"
+        "• `- 1.2tr ck labo rang su chi Nga` ➡️ Chi tiền làm labo\n"
         "• Chụp ảnh hóa đơn/phiếu thu gửi vào đây để AI đọc tự động.\n\n"
-        "📌 *CÁC LỆNH BÁO CÁO & QUẢN LÝ:*\n"
-        "• /today hoặc /ngay : Tổng kết thu chi hôm nay\n"
-        "• /thang hoặc /baocao : Báo cáo doanh thu & chi phí tháng\n"
-        "• /excel : Xuất file Excel báo cáo hoàn chỉnh gửi về máy\n"
-        "• /ds : Xem 10 giao dịch gần nhất\n"
+        "📌 *CÁC LỆNH QUẢN TRỊ TRÊN GOOGLE SHEETS:*\n"
+        "• /sheet : Mở trực tiếp Sổ Quỹ Google Sheets online\n"
+        "• /today : Xem nhanh tổng kết thu chi hôm nay\n"
+        "• /thang : Xem nhanh tổng kết doanh thu & chi phí tháng này\n"
+        "• /ds : Xem 10 giao dịch vừa nhập gần nhất\n"
         "• /xoa `<id>` : Xóa giao dịch nếu nhập nhầm (VD: `/xoa 5`)\n"
-        "• /hoc `<từ khóa> = <thu/chi>: <danh mục>` : Dạy quy tắc mới cho AI\n\n"
-        "📥 *CUỐI THÁNG:* Bạn chỉ cần gửi file Excel sao kê ngân hàng vào đây, hệ thống sẽ tự động đối soát và phân loại!"
+        "• /excel : Tải file Excel của Google Sheets về máy\n"
+        "• /hoc `<từ khóa> = <thu/chi>: <danh mục>` : Dạy từ mới cho AI\n\n"
+        "📥 *CUỐI THÁNG:* Bạn chỉ cần gửi file Excel/CSV sao kê ngân hàng vào đây, hệ thống sẽ tự động bóc tách và đẩy lên Google Sheets!"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await cmd_start(update, context)
@@ -381,17 +383,18 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def post_init(application: Application):
     """Register command menu in Telegram UI."""
     commands = [
-        BotCommand("help", "Xem hướng dẫn sử dụng chi tiết"),
-        BotCommand("today", "Báo cáo thu chi hôm nay"),
-        BotCommand("thang", "Báo cáo tài chính tháng này"),
-        BotCommand("sheet", "Mở Google Sheets online"),
-        BotCommand("excel", "Xuất file Excel báo cáo chi tiết"),
+        BotCommand("sheet", "Mở Google Sheets Sổ Quỹ trực tuyến"),
+        BotCommand("today", "Xem nhanh thu chi hôm nay"),
+        BotCommand("thang", "Xem tổng kết tháng này"),
         BotCommand("ds", "Xem 10 giao dịch gần nhất"),
         BotCommand("xoa", "Xóa giao dịch nhập nhầm (/xoa <id>)"),
+        BotCommand("excel", "Tải file Excel về máy"),
         BotCommand("hoc", "Dạy từ khóa mới cho AI"),
+        BotCommand("help", "Xem cẩm nang hướng dẫn chi tiết"),
     ]
     await application.bot.set_my_commands(commands)
     logger.info("Command menu registered successfully.")
+
 
 def main():
     token = config.TELEGRAM_BOT_TOKEN
