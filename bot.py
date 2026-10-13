@@ -155,10 +155,13 @@ async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         success = database.delete_transaction(tx_id)
+        # Also delete from Google Sheets
+        google_sheets.delete_transaction_online(tx_id)
+
         if success:
             sign = "Thu" if tx["type"] == "thu" else "Chi"
             await update.message.reply_text(
-                f"🗑️ Đã xóa giao dịch `#{tx_id}`: {sign} {format_vnd(tx['amount'])} ({tx['description']}).",
+                f"🗑️ Đã xóa giao dịch `#{tx_id}`: {sign} {format_vnd(tx['amount'])} ({tx['description']}) trên cả máy và Google Sheets.",
                 parse_mode=ParseMode.MARKDOWN
             )
         else:
