@@ -68,6 +68,21 @@ def download_telegram_file(file_id: str):
         print(f"Error downloading telegram file {file_id}: {e}")
         return None
 
+def notify_sheets_error(chat_id: int):
+    """Notify user when Google Sheets rejects or fails the transaction."""
+    msg = (
+        "❌ *CHƯA LƯU ĐƯỢC VÀO GOOGLE SHEETS!*\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "• *Lý do:* Webhook Google Apps Script từ chối kết nối (lỗi 401 Unauthorized hoặc chưa mở quyền).\n\n"
+        "👉 *Cách sửa nhanh (1 phút):*\n"
+        "1. Mở file Google Sheets ➡️ *Tiện ích mở rộng* ➡️ *Apps Script*\n"
+        "2. Bấm nút *Triển khai* (Deploy góc trên phải) ➡️ *Quản lý bản triển khai*\n"
+        "3. Bấm biểu tượng ✏️ *(Chỉnh sửa)*\n"
+        "4. Tại mục *Ai có quyền truy cập (Who has access)*: Đổi thành *Bất kỳ ai (Anyone)*\n"
+        "5. Tại mục *Phiên bản (Version)*: Chọn *Phiên bản mới (New version)* ➡️ Bấm *Triển khai (Deploy)*"
+    )
+    send_telegram_message(chat_id, msg)
+
 def process_telegram_update(update: dict):
     """Process incoming Telegram update dictionary."""
     message = update.get("message")
@@ -246,6 +261,11 @@ def process_telegram_update(update: dict):
                     source="voice",
                     user_id=user_id
                 )
+
+                if not tx_id:
+                    notify_sheets_error(chat_id)
+                    return
+
                 is_thu = parsed.get("type") == "thu"
                 sign_text = "🟢 THU VÀO" if is_thu else "🔴 CHI RA"
                 method_text = "💵 Tiền mặt" if parsed.get("payment_method") == "cash" else "💳 Chuyển khoản"
@@ -291,6 +311,10 @@ def process_telegram_update(update: dict):
                     source="ocr",
                     user_id=user_id
                 )
+                if not tx_id:
+                    notify_sheets_error(chat_id)
+                    return
+
                 sign_text = "🟢 THU VÀO" if parsed.get("type") == "thu" else "🔴 CHI RA"
                 method_text = "💵 Tiền mặt" if parsed.get("payment_method") == "cash" else "💳 Chuyển khoản"
                 msg = (
@@ -333,6 +357,10 @@ def process_telegram_update(update: dict):
                 source="telegram",
                 user_id=user_id
             )
+            if not tx_id:
+                notify_sheets_error(chat_id)
+                return
+
             is_thu = parsed["type"] == "thu"
             sign_text = "🟢 THU VÀO" if is_thu else "🔴 CHI RA"
             method_text = "💵 Tiền mặt" if parsed["payment_method"] == "cash" else "💳 Chuyển khoản"

@@ -79,7 +79,7 @@ def add_transaction(
     res = _call_sheets_api(payload={"action": "add", "data": item})
     if res and res.get("status") == "success":
         return res.get("id", int(datetime.now().timestamp()))
-    return int(datetime.now().timestamp())
+    return None
 
 def add_batch_transactions(items: List[Dict[str, Any]]) -> int:
     """Thêm nhiều giao dịch cùng lúc (từ sao kê ngân hàng) vào Google Sheets."""
@@ -88,7 +88,7 @@ def add_batch_transactions(items: List[Dict[str, Any]]) -> int:
     res = _call_sheets_api(payload={"action": "add", "data": items})
     if res and res.get("status") == "success":
         return res.get("count", len(items))
-    return len(items)
+    return 0
 
 def delete_transaction(tx_id: int) -> bool:
     """Xóa giao dịch theo ID khỏi Google Sheets."""

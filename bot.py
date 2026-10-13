@@ -238,6 +238,21 @@ async def cmd_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
+async def notify_sheets_error_bot(update: Update):
+    """Notify user when Google Sheets fails to save the transaction."""
+    msg = (
+        "❌ *CHƯA LƯU ĐƯỢC VÀO GOOGLE SHEETS!*\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "• *Lý do:* Webhook Google Apps Script từ chối kết nối (lỗi 401 Unauthorized hoặc chưa mở quyền).\n\n"
+        "👉 *Cách sửa nhanh (1 phút):*\n"
+        "1. Mở file Google Sheets ➡️ *Tiện ích mở rộng* ➡️ *Apps Script*\n"
+        "2. Bấm nút *Triển khai* (Deploy góc trên phải) ➡️ *Quản lý bản triển khai*\n"
+        "3. Bấm biểu tượng ✏️ *(Chỉnh sửa)*\n"
+        "4. Tại mục *Ai có quyền truy cập (Who has access)*: Đổi thành *Bất kỳ ai (Anyone)*\n"
+        "5. Tại mục *Phiên bản (Version)*: Chọn *Phiên bản mới (New version)* ➡️ Bấm *Triển khai (Deploy)*"
+    )
+    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle text input from user (e.g. '+ 500k tram rang', '- 70k hoa qua')."""
     user_id = update.effective_user.id
@@ -270,6 +285,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         source="telegram",
         user_id=user_id
     )
+
+    if not tx_id:
+        await notify_sheets_error_bot(update)
+        return
 
     is_thu = parsed["type"] == "thu"
     sign_text = "🟢 THU VÀO" if is_thu else "🔴 CHI RA"
@@ -318,6 +337,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             source="ocr",
             user_id=user_id
         )
+
+        if not tx_id:
+            await notify_sheets_error_bot(update)
+            return
 
         msg = (
             f"🧾 *ĐÃ QUÉT VÀ LƯU HÓA ĐƠN #{tx_id}*\n"
@@ -370,6 +393,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             source="voice",
             user_id=user_id
         )
+
+        if not tx_id:
+            await notify_sheets_error_bot(update)
+            return
 
         is_thu = parsed.get("type") == "thu"
         sign_text = "🟢 THU VÀO" if is_thu else "🔴 CHI RA"
