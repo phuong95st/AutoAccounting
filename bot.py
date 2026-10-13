@@ -3,7 +3,7 @@ import sys
 import logging
 from datetime import datetime
 from pathlib import Path
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
@@ -367,6 +367,20 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error handling document: {e}")
         await update.message.reply_text(f"❌ Lỗi khi phân tích file sao kê: {e}")
 
+async def post_init(application: Application):
+    """Register command menu in Telegram UI."""
+    commands = [
+        BotCommand("help", "Xem hướng dẫn sử dụng chi tiết"),
+        BotCommand("today", "Báo cáo thu chi hôm nay"),
+        BotCommand("thang", "Báo cáo tài chính tháng này"),
+        BotCommand("excel", "Xuất file Excel báo cáo chi tiết"),
+        BotCommand("ds", "Xem 10 giao dịch gần nhất"),
+        BotCommand("xoa", "Xóa giao dịch nhập nhầm (/xoa <id>)"),
+        BotCommand("hoc", "Dạy từ khóa mới cho AI"),
+    ]
+    await application.bot.set_my_commands(commands)
+    logger.info("Command menu registered successfully.")
+
 def main():
     token = config.TELEGRAM_BOT_TOKEN
     if not token or token == "YOUR_TELEGRAM_BOT_TOKEN":
@@ -381,7 +395,8 @@ def main():
         sys.exit(1)
 
     print("🚀 Khởi động AutoAccounting Telegram Bot...")
-    app = Application.builder().token(token).build()
+    app = Application.builder().token(token).post_init(post_init).build()
+
 
     # Commands
     app.add_handler(CommandHandler("start", cmd_start))
