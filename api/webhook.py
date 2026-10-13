@@ -358,6 +358,13 @@ def application(environ, start_response):
     """WSGI standard application entrypoint for Vercel Python runtime."""
     try:
         method = environ.get("REQUEST_METHOD", "GET").upper()
+        path = environ.get("PATH_INFO", "")
+
+        # Gracefully handle browser / crawler favicon requests
+        if "favicon" in path:
+            start_response("204 No Content", [])
+            return [b""]
+
         if method == "GET":
             start_response("200 OK", [("Content-Type", "text/plain; charset=utf-8")])
             if STARTUP_ERROR:
@@ -393,6 +400,11 @@ class handler(BaseHTTPRequestHandler):
         return super().__new__(cls)
 
     def do_GET(self):
+        if "favicon" in self.path:
+            self.send_response(204)
+            self.end_headers()
+            return
+
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.end_headers()
