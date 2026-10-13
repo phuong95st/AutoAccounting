@@ -101,7 +101,9 @@ function doPost(e) {
       }
     }
 
-    return jsonResponse({ status: "success", count: rowsToAdd.length });
+    var firstId = rowsToAdd.length > 0 ? rowsToAdd[0][0] : null;
+    return jsonResponse({ status: "success", count: rowsToAdd.length, id: firstId });
+
 
   } catch (err) {
     return jsonResponse({ status: "error", message: err.toString() });

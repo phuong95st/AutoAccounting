@@ -36,8 +36,8 @@ ALLOWED_TELEGRAM_USERS = [
 # Paths
 DATA_DIR = BASE_DIR / "data"
 REPORTS_DIR = BASE_DIR / "reports"
-DB_PATH = DATA_DIR / "accounting.db"
 RULES_PATH = DATA_DIR / "skills_and_rules.json"
 
 DATA_DIR.mkdir(exist_ok=True)
 REPORTS_DIR.mkdir(exist_ok=True)
+

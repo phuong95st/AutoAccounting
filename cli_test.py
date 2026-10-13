@@ -59,8 +59,9 @@ def main():
                     print(f"  • {c['category']}: {c['total']:,} đ ({c['count']} lần)")
             elif line == "/excel":
                 now = datetime.now()
-                p = ReportGenerator.generate_monthly_excel(now.year, now.month)
-                print(f"✅ Đã tạo file Excel thành công tại: {p}")
+                p = database.download_online_excel() or ReportGenerator.generate_monthly_excel(now.year, now.month)
+                print(f"✅ Đã tải/tạo file Excel thành công tại: {p}")
+
             elif line == "/ds":
                 txs = database.get_recent_transactions(10)
                 print("\n--- 10 GIAO DỊCH GẦN NHẤT ---")

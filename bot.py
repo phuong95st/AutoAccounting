@@ -15,8 +15,8 @@ from telegram.ext import (
 
 import config
 import database
-import google_sheets
 from ai_parser import GeminiParser, RuleEngine, rules_mgr
+
 from bank_reconciler import BankStatementParser, ReportGenerator
 
 
@@ -108,66 +108,63 @@ async def cmd_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(msg_lines), parse_mode=ParseMode.MARKDOWN)
 
 async def cmd_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Export and send Excel report."""
+    """Export and send live Excel file directly from Google Sheets."""
     now = datetime.now()
-    await update.message.reply_text("⏳ Đang khởi tạo file Excel báo cáo tháng... Vui lòng đợi trong giây lát.")
+    await update.message.reply_text("⏳ Đang tải file Excel mới nhất từ Google Sheets... Vui lòng đợi trong giây lát.")
     try:
-        report_path = ReportGenerator.generate_monthly_excel(now.year, now.month)
+        report_path = database.download_online_excel()
+        if not report_path or not report_path.exists():
+            report_path = ReportGenerator.generate_monthly_excel(now.year, now.month)
+
         with open(report_path, "rb") as f:
             await update.message.reply_document(
                 document=f,
                 filename=report_path.name,
-                caption=f"📊 Báo cáo Thu Chi Phòng Khám Nha Khoa Tháng {now.month:02d}/{now.year}."
+                caption=f"📊 Sổ Quỹ Thu Chi Phòng Khám Nha Khoa (Dữ liệu trực tuyến Google Sheets)."
             )
     except Exception as e:
         logger.error(f"Error exporting Excel: {e}")
         await update.message.reply_text(f"❌ Có lỗi khi tạo file Excel: {e}")
 
 async def cmd_recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """View recent transactions."""
+    """View recent transactions from Google Sheets."""
     txs = database.get_recent_transactions(limit=10)
     if not txs:
-        await update.message.reply_text("Chưa có giao dịch nào được ghi nhận.")
+        await update.message.reply_text("Chưa có giao dịch nào được ghi nhận trên Google Sheets.")
         return
 
-    lines = ["📋 *10 GIAO DỊCH GẦN NHẤT:*\n"]
+    lines = ["📋 *10 GIAO DỊCH GẦN NHẤT TRÊN GOOGLE SHEETS:*\n"]
     for t in txs:
-        sign = "🟢 +" if t["type"] == "thu" else "🔴 -"
-        method = "💵" if t["payment_method"] == "cash" else "💳"
+        t_type = str(t.get("type", "")).lower()
+        sign = "🟢 +" if "thu" in t_type else "🔴 -"
+        method = "💵" if "mặt" in str(t.get("payment_method", "")).lower() or "cash" in str(t.get("payment_method", "")).lower() else "💳"
+        d_str = str(t.get("date", ""))
         lines.append(
-            f"`#{t['id']}` | {t['date'][5:]} | {sign}{format_vnd(t['amount'])} {method}\n"
-            f"   ↳ _{t['category']}_: {t['description'] or ''}"
+            f"`#{t.get('id')}` | {d_str[5:]} | {sign}{format_vnd(int(t.get('amount', 0)))} {method}\n"
+            f"   ↳ _{t.get('category', '')}_: {t.get('description', '')}"
         )
     lines.append("\n_Gõ `/xoa <id>` để xóa nếu có giao dịch nhập nhầm._")
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
 async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Delete a transaction by ID."""
+    """Delete a transaction by ID from Google Sheets."""
     if not context.args:
         await update.message.reply_text("⚠️ Cú pháp: `/xoa <id>` (Ví dụ: `/xoa 15`)", parse_mode=ParseMode.MARKDOWN)
         return
 
     try:
         tx_id = int(context.args[0])
-        tx = database.get_transaction(tx_id)
-        if not tx:
-            await update.message.reply_text(f"❌ Không tìm thấy giao dịch với ID #{tx_id}.")
-            return
-
         success = database.delete_transaction(tx_id)
-        # Also delete from Google Sheets
-        google_sheets.delete_transaction_online(tx_id)
-
         if success:
-            sign = "Thu" if tx["type"] == "thu" else "Chi"
             await update.message.reply_text(
-                f"🗑️ Đã xóa giao dịch `#{tx_id}`: {sign} {format_vnd(tx['amount'])} ({tx['description']}) trên cả máy và Google Sheets.",
+                f"🗑️ Đã xóa giao dịch `#{tx_id}` trên Google Sheets thành công.",
                 parse_mode=ParseMode.MARKDOWN
             )
         else:
-            await update.message.reply_text("❌ Không thể xóa giao dịch.")
+            await update.message.reply_text(f"❌ Không tìm thấy giao dịch `#{tx_id}` trên Google Sheets.")
     except ValueError:
         await update.message.reply_text("⚠️ ID phải là chữ số. Ví dụ: `/xoa 12`", parse_mode=ParseMode.MARKDOWN)
+
 
 async def cmd_teach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Teach new rule/keyword to the bot."""
@@ -247,8 +244,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Save to database
-    now = datetime.now()
+    # Save directly to Google Sheets database
     tx_id = database.add_transaction(
         tx_type=parsed["type"],
         amount=parsed["amount"],
@@ -258,20 +254,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         source="telegram",
         user_id=user_id
     )
-
-    # Sync to Google Sheets Real-Time
-    google_sheets.sync_transaction_async({
-        "id": tx_id,
-        "date": now.strftime("%Y-%m-%d"),
-        "time": now.strftime("%H:%M:%S"),
-        "type": parsed["type"],
-        "amount": parsed["amount"],
-        "category": parsed["category"],
-        "description": parsed.get("description", ""),
-        "payment_method": parsed.get("payment_method", "cash"),
-        "source": "telegram"
-    })
-
 
     is_thu = parsed["type"] == "thu"
     sign_text = "🟢 THU VÀO" if is_thu else "🔴 CHI RA"
@@ -286,6 +268,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Danh mục: _{parsed['category']}_\n"
         f"• Nội dung: {parsed.get('description', '')}\n"
         f"• Hình thức: {method_text}\n"
+        f"• Nơi lưu: _Google Sheets Online_\n"
         f"• Xử lý: _{engine_badge}_\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"_(Nhập nhầm? Gõ `/xoa {tx_id}` để xóa)_"
@@ -320,19 +303,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id=user_id
         )
 
-        now = datetime.now()
-        google_sheets.sync_transaction_async({
-            "id": tx_id,
-            "date": now.strftime("%Y-%m-%d"),
-            "time": now.strftime("%H:%M:%S"),
-            "type": parsed.get("type", "chi"),
-            "amount": parsed["amount"],
-            "category": parsed["category"],
-            "description": parsed.get("description", "Hóa đơn chụp"),
-            "payment_method": parsed.get("payment_method", "cash"),
-            "source": "ocr"
-        })
-
         msg = (
             f"🧾 *ĐÃ QUÉT VÀ LƯU HÓA ĐƠN #{tx_id}*\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -340,6 +310,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• Danh mục: _{parsed['category']}_\n"
             f"• Nội dung: {parsed.get('description', '')}\n"
             f"• Hình thức: {'💵 Tiền mặt' if parsed.get('payment_method') == 'cash' else '💳 Chuyển khoản'}\n"
+            f"• Nơi lưu: _Google Sheets Online_\n"
             f"• Nguồn: _Gemini Vision OCR_\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"_(Nhập nhầm? Gõ `/xoa {tx_id}` để xóa)_"
@@ -377,30 +348,15 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         total_in = 0
         total_out = 0
-        saved_count = 0
-        synced_items = []
-
         for it in items:
-            new_id = database.add_transaction(
-                tx_type=it["type"],
-                amount=it["amount"],
-                category=it["category"],
-                description=it["description"],
-                payment_method="transfer",
-                source="bank_statement",
-                user_id=user_id,
-                tx_date=it["date"] if it.get("date") else None
-            )
-            saved_count += 1
-            it["id"] = new_id
-            synced_items.append(it)
             if it["type"] == "thu":
                 total_in += it["amount"]
             else:
                 total_out += it["amount"]
 
-        # Batch sync to Google Sheets
-        google_sheets.sync_batch_async(synced_items)
+        # Batch save directly to Google Sheets
+        saved_count = database.add_batch_transactions(items)
+
 
         # Clean up temporary file
         try:

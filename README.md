@@ -27,8 +27,8 @@ flowchart TD
     end
 
     subgraph Lưu Trữ & Báo Cáo
-        DB[(SQLite Database)]
-        Rep[Báo cáo Excel Chuyên nghiệp]
+        DB[(Google Sheets Online\nCơ Sở Dữ Liệu Trung Tâm)]
+        Rep[File Excel Trực Tuyến]
     end
 
     T --> AI
@@ -40,8 +40,9 @@ flowchart TD
     AI --> DB
     Rule --> DB
     DB --> Rep
-    Rep -->|Gửi file trực tiếp| T
+    Rep -->|Tải file trực tiếp| T
 ```
+
 
 ---
 
