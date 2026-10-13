@@ -55,9 +55,23 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /xoa `<id>` : Xóa giao dịch nếu nhập nhầm (VD: `/xoa 5`)\n"
         "• /excel : Tải file Excel của Google Sheets về máy\n"
         "• /hoc `<từ khóa> = <thu/chi>: <danh mục>` : Dạy từ mới cho AI\n\n"
-        "📥 *CUỐI THÁNG:* Bạn chỉ cần gửi file Excel/CSV sao kê ngân hàng vào đây, hệ thống sẽ tự động bóc tách và đẩy lên Google Sheets!"
+        "📥 *CUỐI THÁNG:* Bạn chỉ cần gửi file Excel/CSV sao kê ngân hàng vào đây, hệ thống sẽ tự động bóc tách và đẩy lên Google Sheets!\n\n"
+        f"🆔 *Telegram ID của bạn:* `{user.id}`"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+
+async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show current user's Telegram ID."""
+    user = update.effective_user
+    chat = update.effective_chat
+    await update.message.reply_text(
+        f"🆔 *THÔNG TIN TÀI KHOẢN:*\n"
+        f"• User ID của bạn: `{user.id}`\n"
+        f"• Chat ID: `{chat.id}`\n\n"
+        f"_(Nếu muốn bảo mật chỉ cho phép một mình bạn dùng bot, hãy dán ID `{user.id}` vào biến `ALLOWED_TELEGRAM_USERS` trong file `.env`)_",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -427,6 +441,8 @@ def main():
     app.add_handler(CommandHandler("xoa", cmd_delete))
     app.add_handler(CommandHandler("hoc", cmd_teach))
     app.add_handler(CommandHandler("rule", cmd_teach))
+    app.add_handler(CommandHandler("id", cmd_id))
+
 
 
 
