@@ -1,13 +1,8 @@
 {
-  "version": 2,
   "rewrites": [
     {
-      "source": "/api/webhook",
-      "destination": "/api/webhook.py"
-    },
-    {
       "source": "/",
-      "destination": "/api/webhook.py"
+      "destination": "/api/webhook"
     }
   ]
 }
