@@ -144,7 +144,7 @@ function doGet(e) {
       };
 
       for (var i = 0; i < rows.length; i++) {
-        var rDate = String(rows[i][1]).substring(0, 10);
+        var rDate = formatCellDate(rows[i][1]);
         if (rDate === todayStr) {
           var tType = String(rows[i][3]).toUpperCase();
           var tAmt = Number(rows[i][4]) || 0;
@@ -189,7 +189,7 @@ function doGet(e) {
       };
 
       for (var m = 0; m < rows.length; m++) {
-        var rowDate = String(rows[m][1]).substring(0, 7);
+        var rowDate = formatCellDate(rows[m][1]).substring(0, 7);
         if (rowDate === monthPrefix) {
           var type = String(rows[m][3]).toUpperCase();
           var amt = Number(rows[m][4]) || 0;
@@ -222,8 +222,8 @@ function doGet(e) {
       for (var k = rows.length - 1; k >= startIdx; k--) {
         recentItems.push({
           id: rows[k][0],
-          date: rows[k][1],
-          time: rows[k][2],
+          date: formatCellDate(rows[k][1]),
+          time: formatCellTime(rows[k][2]),
           type: rows[k][3],
           amount: rows[k][4],
           payment_method: rows[k][5],
@@ -260,4 +260,34 @@ function initHeaderIfNeeded(sheet) {
 function jsonResponse(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+function formatCellDate(val) {
+  if (!val) return "";
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, "Asia/Ho_Chi_Minh", "yyyy-MM-dd");
+  }
+  var s = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    return s.substring(0, 10);
+  }
+  try {
+    var d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      return Utilities.formatDate(d, "Asia/Ho_Chi_Minh", "yyyy-MM-dd");
+    }
+  } catch (e) {}
+  return s.substring(0, 10);
+}
+
+function formatCellTime(val) {
+  if (!val) return "";
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, "Asia/Ho_Chi_Minh", "HH:mm:ss");
+  }
+  var s = String(val).trim();
+  if (/^\d{2}:\d{2}/.test(s)) {
+    return s.substring(0, 8);
+  }
+  return s;
 }

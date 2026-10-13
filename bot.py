@@ -154,9 +154,10 @@ async def cmd_recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
         t_type = str(t.get("type", "")).lower()
         sign = "🟢 +" if "thu" in t_type else "🔴 -"
         method = "💵" if "mặt" in str(t.get("payment_method", "")).lower() or "cash" in str(t.get("payment_method", "")).lower() else "💳"
-        d_str = str(t.get("date", ""))
+        d_raw = str(t.get("date", ""))
+        d_display = f"{d_raw[8:10]}/{d_raw[5:7]}" if len(d_raw) >= 10 else d_raw
         lines.append(
-            f"`#{t.get('id')}` | {d_str[5:]} | {sign}{format_vnd(int(t.get('amount', 0)))} {method}\n"
+            f"`#{t.get('id')}` | {d_display} | {sign}{format_vnd(int(t.get('amount', 0)))} {method}\n"
             f"   ↳ _{t.get('category', '')}_: {t.get('description', '')}"
         )
     lines.append("\n_Gõ `/xoa <id>` để xóa nếu có giao dịch nhập nhầm._")
