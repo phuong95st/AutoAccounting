@@ -1,141 +1,157 @@
-# 🦷 AutoAccounting - Trợ Lý Quản Lý Thu Chi Phòng Khám Nha Khoa
+# 🦷 AutoAccounting v1.0 - Trợ Lý Quản Lý Thu Chi Phòng Khám Nha Khoa
 
-Hệ thống quản lý, phân loại và đối soát thu chi tự động thông minh dành riêng cho **Phòng khám Răng / Nha khoa**:
-- ⚡ **Ghi chép siêu tốc qua Telegram Bot**: Nhập liệu 3 giây trên điện thoại (`+ 500k tram rang`, `- 70k hoa qua thap huong`...).
-- 🧠 **Trí tuệ nhân tạo Gemini AI**: Tự động nhận diện số tiền, nội dung, hình thức thanh toán và phân loại danh mục nha khoa chuẩn xác.
-- 🛡️ **Cơ chế Fallback & Tự học (Self-Learning)**: Nếu AI quá tải/hết token, hệ thống tự động kích hoạt **Rule Engine** dự phòng, không bao giờ gián đoạn. Người dùng có thể dạy từ mới cho bot ngay trong khi chat.
-- 📸 **Quét hóa đơn / Biên lai (OCR)**: Chụp ảnh hóa đơn mua vật tư gửi vào bot, Gemini Vision tự bóc tách số tiền.
-- 📑 **Đối soát Sao kê Ngân hàng cuối tháng**: Kéo thả file Excel sao kê ngân hàng (VCB, TCB, MB, ACB...), hệ thống tự động bóc tách và khớp sổ quỹ.
-- 📊 **Xuất Báo cáo Excel chuyên nghiệp**: Tự động sinh file Excel với Dashboard, phân tích cơ cấu chi phí, tổng kết thu chi và lợi nhuận ròng.
+[![Release](https://img.shields.io/badge/Release-v1.0-brightgreen.svg)](https://github.com/phuong95st/AutoAccounting/releases)
+[![AI Engine](https://img.shields.io/badge/AI-Google%20Gemini%203.5%20Flash-blue.svg)](https://ai.google.dev/)
+[![Database](https://img.shields.io/badge/Database-Google%20Sheets%20Online-success.svg)](https://sheets.google.com/)
+[![Platform](https://img.shields.io/badge/Platform-Telegram%20%7C%20Vercel%20Serverless-orange.svg)](https://vercel.com/)
+
+Hệ thống quản lý, phân loại và đối soát thu chi tự động thông minh dành riêng cho **Phòng khám Răng / Nha khoa**. 
+Dữ liệu tập trung **100% trên Google Sheets trực tuyến**, không cần cài đặt cơ sở dữ liệu phức tạp, hoạt động bền bỉ 24/7 trên máy tính hoặc cloud miễn phí Vercel.
 
 ---
 
-## 🏗️ Kiến Trúc Hệ Thống
+## 🌟 Điểm Nổi Bật Của Phiên Bản v1.0
+
+- ⚡ **Ghi chép thu chi 3 giây trên iPhone / Telegram**: Nhập liệu tự nhiên như nhắn tin trò chuyện (`+ 500k tram rang`, `- 70k hoa qua thap huong`...).
+- 🧠 **Trí tuệ nhân tạo Gemini 3.5 Flash**: Tự động nhận diện số tiền, nội dung, phân loại danh mục nha khoa, dung lỗi chính tả và tiếng Việt không dấu.
+- 🛡️ **Dual-Engine & Tự học (Self-Learning)**: Tự động chuyển đổi sang **Rule Engine** khi AI mất mạng hoặc hết token. Bạn có thể dạy từ mới cho bot ngay khi chat qua lệnh `/hoc`.
+- 📊 **Cơ sở dữ liệu Google Sheets trực tuyến**: 
+  - Toàn bộ dữ liệu nằm trên 1 file Google Sheets duy nhất.
+  - Phân quyền chặt chẽ: Chỉ chủ phòng khám và Bot mới có quyền ghi, người khác chỉ có quyền xem.
+  - Tô màu thông minh: **THU màu xanh**, **CHI màu đỏ**, số tiền định dạng tiền tệ `#,##0 ₫`.
+- 📸 **Quét hóa đơn / Biên lai (Gemini Vision OCR)**: Chụp ảnh hóa đơn mua vật tư gửi vào bot, AI tự bóc tách số tiền và ghi vào sổ quỹ.
+- 📑 **Đối soát Sao kê Ngân hàng cuối tháng**: Gửi file Excel sao kê (VCB, TCB, MB, ACB...), bot tự động nạp toàn bộ danh sách giao dịch lên Google Sheets trong 1 giây.
+- 🚀 **Sẵn sàng triển khai Vercel Serverless**: Chạy vĩnh viễn 24/7 với chi phí **0 đồng**, không cần treo máy tính.
+
+---
+
+## 🏗️ Kiến Trúc Hệ Thống (Cloud-Native)
 
 ```mermaid
 flowchart TD
-    subgraph Kênh Tiếp Nhận
+    subgraph Kênh Người Dùng
         T[Telegram Bot / iPhone]
         CLI[Terminal / CLI Test]
         Bank[File Sao kê Ngân hàng Excel/CSV]
     end
 
     subgraph Bộ Xử Lý Thông Minh
-        AI[Google Gemini 3.5 Flash]
-        Rule[Rule Engine Dự Phòng & Regex]
+        AI[Google Gemini 3.5 Flash\nPrimary & Backup Keys]
+        Rule[Rule Engine Dự Phòng\nKhử dấu & Sửa lỗi chính tả]
         KB[(Kiến thức & Quy tắc Tự học\nskills_and_rules.json)]
     end
 
     subgraph Lưu Trữ & Báo Cáo
-        DB[(Google Sheets Online\nCơ Sở Dữ Liệu Trung Tâm)]
-        Rep[File Excel Trực Tuyến]
+        Vercel[Vercel Serverless Function\napi/webhook.py]
+        Sheet[(Google Sheets Online\nCơ Sở Dữ Liệu Trung Tâm)]
     end
 
-    T --> AI
+    T --> Vercel
     CLI --> AI
     Bank --> Rule
-    AI -.->|Fallback khi lỗi/hết token| Rule
+    Vercel --> AI
+    AI -.->|Fallback khi hết token/lỗi mạng| Rule
     KB <--> AI
     KB <--> Rule
-    AI --> DB
-    Rule --> DB
-    DB --> Rep
-    Rep -->|Tải file trực tiếp| T
+    AI --> Sheet
+    Rule --> Sheet
+    Sheet -->|Xem trực tiếp 1 click| T
 ```
-
 
 ---
 
-## 🚀 Hướng Dẫn Cài Đặt & Chạy
+## 💬 Cẩm Nang Sử Dụng Hàng Ngày Trên Telegram
 
-### 1. Cài đặt môi trường
-Đảm bảo máy đã cài Python (>= 3.10). Cài đặt các thư viện phụ thuộc:
-```bash
-pip install -r requirements.txt
-```
-
-### 2. Cấu hình file `.env`
-Mở file `.env` và kiểm tra cấu hình:
-```env
-# Gemini API Keys (Lấy từ Google AI Studio)
-GEMINI_API_KEY_PRIMARY=your_gemini_api_key_primary
-GEMINI_API_KEY_BACKUP=your_gemini_api_key_backup
-GEMINI_MODEL=gemini-3.5-flash
-
-# Telegram Bot Token (Lấy từ @BotFather trên Telegram)
-TELEGRAM_BOT_TOKEN=dien_token_cua_ban_vao_day
-
-```
-
-#### Cách tạo Bot Telegram miễn phí trong 1 phút:
-1. Mở Telegram trên điện thoại hoặc máy tính, tìm kiếm **`@BotFather`**.
-2. Bấm `Start` và gửi lệnh: `/newbot`.
-3. Đặt tên hiển thị cho Bot (Ví dụ: `KeToanNhaKhoaBot`).
-4. Đặt username kết thúc bằng chữ `bot` (Ví dụ: `phuong_ketoan_bot`).
-5. BotFather sẽ gửi cho bạn một chuỗi **HTTP API Token** (dạng `123456789:ABCdefGhIJKlmNo...`).
-6. Dán chuỗi Token này vào biến `TELEGRAM_BOT_TOKEN` trong file `.env`.
-
-### 3. Khởi động Bot
-```bash
-python bot.py
-```
-Sau khi chạy, bạn chỉ cần mở Telegram trên iPhone tìm bot của mình và bấm `/start`!
-
----
-
-## 💬 Hướng Dẫn Sử Dụng Hàng Ngày Trên Telegram
-
-### 1. Nhập nhanh thu tiền:
-* `+ 500k tram rang` ➡️ Thu tiền mặt: 500.000 ₫, Doanh thu Dịch vụ.
-* `+ 2tr ck khach Mai boc rang su` ➡️ Khách CK: 2.000.000 ₫, Doanh thu Dịch vụ.
+### 1. Nhập nhanh thu tiền (Khách thanh toán):
+* `+ 500k khach tram rang` ➡️ Thu tiền mặt: 500.000 ₫, Doanh thu Dịch vụ.
+* `+ 2tr ck khach Trang boc rang su` ➡️ Khách CK: 2.000.000 ₫, Doanh thu Dịch vụ.
 * `thu 350.000 nho rang` ➡️ Thu tiền mặt: 350.000 ₫.
 
-### 2. Nhập nhanh chi tiền:
+### 2. Nhập nhanh chi tiền (Chi phí phòng khám):
 * `- 70k hoa qua thap huong` ➡️ Chi tiền mặt: 70.000 ₫, Tâm linh & Sinh hoạt.
 * `- 1.2tr ck labo rang su chi Nga` ➡️ Chi CK: 1.200.000 ₫, Chi phí Labo.
 * `- 150k mua gang tay y te` ➡️ Chi tiền mặt: 150.000 ₫, Vật tư & Thuốc men.
 
-### 3. Gửi ảnh hóa đơn:
-Chụp ảnh hóa đơn mua thuốc/vật tư gửi trực tiếp vào bot, AI Gemini Vision sẽ tự động đọc số tiền và lưu vào sổ quỹ.
+### 3. Gửi ảnh hóa đơn giấy:
+Chụp ảnh hóa đơn mua thuốc/vật tư gửi trực tiếp vào bot, Gemini Vision tự động nhận diện và lưu vào Google Sheets.
 
 ### 4. Cuối tháng - Nhập sao kê ngân hàng:
-Gửi file Excel/CSV sao kê ngân hàng vào bot, hệ thống sẽ tự động bóc tách từng dòng giao dịch và lưu vào database.
-
-### 5. Các lệnh báo cáo & quản trị:
-* `/today` hoặc `/ngay`: Xem tổng kết thu - chi - chênh lệch hôm nay.
-* `/thang` hoặc `/baocao`: Xem báo cáo doanh thu, chi phí, lợi nhuận tháng này.
-* `/sheet` hoặc `/link`: Mở trực tiếp bảng tính Google Sheets online trên điện thoại.
-* `/excel`: Xuất file Excel báo cáo hoàn chỉnh tải về máy.
-* `/ds`: Xem danh sách 10 giao dịch gần nhất kèm mã ID.
-* `/xoa <id>`: Xóa giao dịch nếu lỡ tay nhập nhầm (Ví dụ: `/xoa 5`).
-* `/hoc <từ khóa> = <thu/chi>: <danh mục>`: Dạy cho AI nhận diện từ mới (Ví dụ: `/hoc cafe = chi: Chi phí Tâm linh & Sinh hoạt`).
+Kéo thả file Excel/CSV sao kê ngân hàng vào bot, hệ thống tự động bóc tách từng dòng và đẩy lên Google Sheets trong 1 lần gọi.
 
 ---
 
-## 📊 Hướng Dẫn Kết Nối Google Sheets Online (Real-Time)
+## 📌 Danh Sách Lệnh Quản Trị (Menu Lệnh Telegram)
 
-Nếu bạn muốn mỗi khi chat vào Telegram, dữ liệu lập tức xuất hiện trên bảng tính Google Sheets:
-
-1. Tạo một file Google Sheets mới trên Google Drive (Ví dụ: `Sổ Quỹ Nha Khoa`).
-2. Trong Google Sheets, chọn menu **Tiện ích mở rộng (Extensions)** ➡️ **Apps Script**.
-3. Xóa nội dung mặc định, copy toàn bộ nội dung file [`google_sheets_script.js`](file:///D:/03.Work/AutoAccounting/google_sheets_script.js) dán vào và bấm **Lưu**.
-4. Bấm **Triển khai (Deploy)** ➡️ **Tùy chọn triển khai mới (New deployment)**:
-   - Chọn loại: **Ứng dụng web (Web app)**
-   - Thực thi dưới dạng: **Tôi (Me)**
-   - Người có quyền truy cập: **Bất kỳ ai (Anyone)**
-   - Bấm **Triển khai**, cấp quyền và copy chuỗi **URL ứng dụng web** (dạng `https://script.google.com/macros/s/.../exec`).
-5. Dán URL này vào biến `GOOGLE_SHEETS_WEBHOOK_URL` trong file `.env`.
-6. Dán link xem trang tính vào `GOOGLE_SHEETS_URL` trong file `.env`.
-
-Từ giờ, mọi giao dịch bạn nhắn trên Telegram sẽ được tự động điền ngay 1 dòng vào Google Sheets!
-
+| Lệnh | Ý nghĩa & Hướng dẫn sử dụng |
+| :--- | :--- |
+| **`/sheet`** | **Mở trực tiếp Sổ Quỹ Google Sheets online trên điện thoại bằng 1 click.** |
+| **`/today`** | **Xem nhanh hôm nay:** Tổng thu, tổng chi, tồn tiền mặt, chuyển khoản. |
+| **`/thang`** | **Xem tổng kết tháng này:** Doanh thu, chi phí, lợi nhuận ròng và cơ cấu các khoản chi lớn nhất. |
+| **`/ds`** | **Xem 10 giao dịch gần nhất** vừa nhập để kiểm tra mã ID. |
+| **`/xoa <id>`** | **Xóa giao dịch nhập nhầm** (Ví dụ: `/xoa 12` ➡️ Tự động xóa dòng 12 trên Google Sheets). |
+| **`/excel`** | **Tải file Excel của Google Sheets về máy** để lưu trữ offline. |
+| **`/hoc`** | **Dạy từ khóa mới cho AI:** Cú pháp: `/hoc <từ khóa> = <thu/chi>: <danh mục>` |
+| **`/id`** | **Hiển thị Telegram User ID của bạn** để phục vụ phân quyền bảo mật. |
+| **`/help`** | **Mở cẩm nang hướng dẫn sử dụng nhanh.** |
 
 ---
 
-## 🧪 Thử Nghiệm Nhanh Bằng Dòng Lệnh (CLI Test)
+## 🚀 Hướng Dẫn Cài Đặt & Triển Khai
 
-Nếu chưa kịp tạo bot Telegram, bạn có thể chạy thử nghiệm toàn bộ hệ thống ngay trên máy tính bằng lệnh:
-```bash
-python cli_test.py
-```
-Màn hình tương tác sẽ cho phép bạn gõ giao dịch, xem báo cáo và xuất file Excel ngay lập tức.
+### Cách 1: Chạy trực tiếp trên Máy tính (Local)
+
+1. **Cài đặt thư viện phụ thuộc:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. **Cấu hình file `.env`:**
+   ```env
+   # Gemini API Keys
+   GEMINI_API_KEY_PRIMARY=key_chinh_cua_ban
+   GEMINI_API_KEY_BACKUP=key_phu_cua_ban
+   GEMINI_MODEL=gemini-3.5-flash
+
+   # Telegram Bot Token (Lấy từ @BotFather)
+   TELEGRAM_BOT_TOKEN=token_bot_telegram_cua_ban
+
+   # Google Sheets Integration
+   GOOGLE_SHEETS_WEBHOOK_URL=https://script.google.com/macros/s/.../exec
+   GOOGLE_SHEETS_URL=https://docs.google.com/spreadsheets/d/.../edit
+
+   # Phân quyền (Tùy chọn: Dán ID từ lệnh /id để khóa bot chỉ cho bạn dùng)
+   ALLOWED_TELEGRAM_USERS=
+   ```
+3. **Khởi động bot:**
+   ```bash
+   python bot.py
+   ```
+
+---
+
+### Cách 2: Triển khai Miễn Phí 24/7 lên Vercel (Không cần bật máy tính)
+
+1. Đăng nhập [vercel.com](https://vercel.com) ➡️ Bấm **Add New Project** ➡️ Import repository **`AutoAccounting`**.
+2. Thêm các biến môi trường từ `.env` vào mục **Environment Variables** trên Vercel.
+3. Bấm **Deploy**. Vercel sẽ cấp cho bạn tên miền (VD: `https://auto-accounting.vercel.app`).
+4. Mở trình duyệt web và kích hoạt Webhook:
+   ```text
+   https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<TEN_MIEN_VERCEL>/api/webhook
+   ```
+   Trình duyệt báo `{"ok":true}` là bot sẽ chạy tự động mãi mãi trên đám mây!
+
+---
+
+## ⚠️ Lưu Ý Quan Trọng Khi Thiết Lập Google Sheets
+
+Khi triển khai Google Apps Script ([`google_sheets_script.js`](google_sheets_script.js)):
+* Ở mục **Người có quyền truy cập (Who has access)**: **BẮT BUỘC PHẢI CHỌN "BẤT KỲ AI" (ANYONE)**.
+  *(Nếu chọn "Bất kỳ ai có tài khoản Google", bot sẽ bị chặn lỗi `HTTP 401 Unauthorized` vì bot không thể đăng nhập Google)*.
+* Để khóa không cho người khác chỉnh sửa bảng tính:
+  - Bấm **Chia sẻ (Share)** trên Google Sheets ➡️ Đặt quyền là **"Người xem" (Viewer)**.
+  - Bot vẫn ghi thêm dòng được bình thường vì bot chạy dưới quyền Chủ sở hữu của bạn.
+
+---
+
+## 📄 Bản Quyền & Giấy Phép
+Dự án được xây dựng phục vụ nhu cầu quản lý tài chính phòng khám nha khoa tự động, mã nguồn mở và miễn phí sử dụng.
+Release Version: **v1.0** (Tháng 10/2026).

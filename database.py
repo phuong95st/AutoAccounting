@@ -162,7 +162,15 @@ def get_recent_transactions(limit: int = 10) -> List[Dict[str, Any]]:
         return res.get("items", [])[:limit]
     return []
 
+def get_transactions_by_month(year: int, month: int) -> List[Dict[str, Any]]:
+    """Lấy danh sách các giao dịch trong tháng từ Google Sheets."""
+    res = _call_sheets_api(params={"action": "recent"})
+    if res and res.get("status") == "success":
+        return res.get("items", [])
+    return []
+
 def download_online_excel() -> Optional[Path]:
+
     """Tải trực tiếp file Excel của Google Sheets về máy."""
     sheets_url = config.GOOGLE_SHEETS_URL
     if not sheets_url:

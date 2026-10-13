@@ -319,18 +319,25 @@ class ReportGenerator:
             cell.border = border_thin
 
         for r_idx, tx in enumerate(transactions, start=2):
-            t_type = "THU" if tx["type"] == "thu" else "CHI"
-            p_method = "Tiền mặt" if tx["payment_method"] == "cash" else "Chuyển khoản"
+            raw_type = str(tx.get("type", "")).lower()
+            t_type = "THU" if "thu" in raw_type else "CHI"
+            raw_meth = str(tx.get("payment_method", "")).lower()
+            p_method = "Chuyển khoản" if "khoản" in raw_meth or "transfer" in raw_meth else "Tiền mặt"
             
-            c_id = ws_detail.cell(row=r_idx, column=1, value=tx["id"])
-            c_date = ws_detail.cell(row=r_idx, column=2, value=tx["date"])
-            c_time = ws_detail.cell(row=r_idx, column=3, value=tx["time"])
+            c_id = ws_detail.cell(row=r_idx, column=1, value=tx.get("id", r_idx - 1))
+            c_date = ws_detail.cell(row=r_idx, column=2, value=tx.get("date", ""))
+            c_time = ws_detail.cell(row=r_idx, column=3, value=tx.get("time", ""))
             c_type = ws_detail.cell(row=r_idx, column=4, value=t_type)
-            c_amt = ws_detail.cell(row=r_idx, column=5, value=tx["amount"])
+            try:
+                amt_val = int(tx.get("amount", 0))
+            except:
+                amt_val = 0
+            c_amt = ws_detail.cell(row=r_idx, column=5, value=amt_val)
             c_meth = ws_detail.cell(row=r_idx, column=6, value=p_method)
-            c_cat = ws_detail.cell(row=r_idx, column=7, value=tx["category"])
-            c_desc = ws_detail.cell(row=r_idx, column=8, value=tx["description"])
+            c_cat = ws_detail.cell(row=r_idx, column=7, value=tx.get("category", ""))
+            c_desc = ws_detail.cell(row=r_idx, column=8, value=tx.get("description", ""))
             c_src = ws_detail.cell(row=r_idx, column=9, value=tx.get("source", "telegram"))
+
 
             c_id.alignment = align_center
             c_date.alignment = align_center
