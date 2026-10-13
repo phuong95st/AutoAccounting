@@ -35,14 +35,11 @@ def sync_transaction_async(tx_data: Dict[str, Any]):
     thread.start()
 
 def sync_batch_async(transactions: List[Dict[str, Any]]):
-    """Sync multiple transactions to Google Sheets."""
+    """Sync multiple transactions to Google Sheets in a single batch request."""
     webhook_url = config.GOOGLE_SHEETS_WEBHOOK_URL
-    if not webhook_url:
+    if not webhook_url or not transactions:
         return
 
-    def _batch_worker():
-        for tx in transactions:
-            _send_post(webhook_url, tx)
-
-    thread = threading.Thread(target=_batch_worker, daemon=True)
+    thread = threading.Thread(target=_send_post, args=(webhook_url, transactions), daemon=True)
     thread.start()
+
