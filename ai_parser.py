@@ -252,9 +252,10 @@ Chỉ trả về JSON thuần, không kèm markdown hay lời dẫn.
 """
 
     @classmethod
-    def _call_gemini_api(cls, prompt: str, image_b64: Optional[str] = None, mime_type: str = "image/jpeg") -> Optional[str]:
+    def _call_gemini_api(cls, prompt: str, inline_b64: Optional[str] = None, mime_type: str = "image/jpeg", image_b64: Optional[str] = None) -> Optional[str]:
         keys = [GEMINI_API_KEY_PRIMARY, GEMINI_API_KEY_BACKUP]
         models = GEMINI_MODELS
+        media_b64 = inline_b64 or image_b64
 
         for key in keys:
             if not key:
@@ -262,11 +263,11 @@ Chỉ trả về JSON thuần, không kèm markdown hay lời dẫn.
             for model in models:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
                 parts = []
-                if image_b64:
+                if media_b64:
                     parts.append({
                         "inline_data": {
                             "mime_type": mime_type,
-                            "data": image_b64
+                            "data": media_b64
                         }
                     })
                 parts.append({"text": prompt})
@@ -357,5 +358,65 @@ Trả về JSON duy nhất:
                 return data
         except Exception as e:
             print(f"Image OCR error: {e}")
+
+        return None
+
+    @classmethod
+    def parse_voice_audio(cls, audio_bytes: bytes, mime_type: str = "audio/ogg") -> Optional[Dict[str, Any]]:
+        """Parse voice recording / audio memo using Gemini Multimodal Audio."""
+        b64 = base64.b64encode(audio_bytes).decode("utf-8")
+        learned_rules_text = rules_mgr.get_learned_rules_text()
+
+        prompt = f"""Bạn là trợ lý AI kế toán chuyên nghiệp cho Phòng khám Răng / Nha khoa.
+Người dùng gửi một đoạn ghi âm giọng nói (voice message) mô tả thu chi của phòng khám.
+
+Nhiệm vụ của bạn:
+1. Nghe và nhận diện chính xác nội dung lời nói (transcript tiếng Việt).
+2. Phân tích và trích xuất thành giao dịch thu hoặc chi chuẩn định dạng JSON.
+
+DANH MỤC THU CHUẨN:
+- Doanh thu Dịch vụ (Trám răng, nhổ răng, răng sứ, niềng răng, implant, cạo vôi, tẩy trắng, chụp phim, khám...)
+- Thu khác
+
+DANH MỤC CHI CHUẨN:
+- Chi phí Labo (Làm răng sứ, hàm giả, xưởng labo, mắc cài, máng tẩy)
+- Vật tư & Thuốc men (Thuốc tê, găng tay, khẩu trang, bông gòn, composite, kim tiêm, dụng cụ)
+- Chi phí Tâm linh & Sinh hoạt (Hoa quả thắp hương, lễ bái, trà, cafe, ăn trưa nhân viên, giấy vệ sinh)
+- Chi phí Vận hành & Tiện ích (Mặt bằng, điện nước, internet, rác y tế, sửa chữa)
+- Lương & Nhân sự (Lương, phụ cấp, hoa hồng, ứng lương)
+- Chi khác
+
+QUY TẮC ĐÃ HỌC:
+{learned_rules_text}
+
+HÌNH THỨC THANH TOÁN (payment_method):
+- "transfer": nếu có nhắc đến chuyển khoản, ck, ngân hàng, bank, tài khoản, quét mã qr.
+- "cash": tiền mặt (mặc định nếu không nói chuyển khoản).
+
+ĐỊNH DẠNG JSON TRẢ VỀ DUY NHẤT:
+{{
+  "transcript": "Lời thoại bạn nghe được từ bản ghi âm",
+  "type": "thu" hoặc "chi",
+  "amount": số tiền nguyên dương VND (ví dụ: 500k -> 500000, 1.2tr -> 1200000, 70k -> 70000),
+  "category": "Tên danh mục phù hợp nhất",
+  "description": "Nội dung ngắn gọn",
+  "payment_method": "cash" hoặc "transfer"
+}}
+Chỉ trả về JSON thuần, không kèm markdown hay giải thích."""
+
+        try:
+            ai_resp = cls._call_gemini_api(prompt, inline_b64=b64, mime_type=mime_type)
+            if ai_resp:
+                clean_json = ai_resp.strip()
+                if clean_json.startswith("```json"):
+                    clean_json = clean_json[7:]
+                if clean_json.endswith("```"):
+                    clean_json = clean_json[:-3]
+                data = json.loads(clean_json.strip())
+                if "amount" in data and "type" in data and data["amount"] > 0:
+                    data["engine"] = "gemini-voice"
+                    return data
+        except Exception as e:
+            print(f"Voice recognition error: {e}")
 
         return None

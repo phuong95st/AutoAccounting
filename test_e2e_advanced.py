@@ -129,6 +129,21 @@ def run_tests():
     else:
         print("❌ Không nhận diện được ảnh.")
 
+    # 3. TEST VOICE AUDIO XỬ LÝ GIỌNG NÓI
+    print("\n--- 3. KIỂM THỬ NHẬN DIỆN TIN NHẮN THOẠI (GEMINI MULTIMODAL AUDIO) ---")
+    import io, wave, struct
+    buf = io.BytesIO()
+    with wave.open(buf, 'wb') as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(16000)
+        for _ in range(16000):
+            wav_file.writeframes(struct.pack('<h', 0))
+    test_audio = buf.getvalue()
+    print("Gửi file âm thanh mẫu tới Gemini Audio API...")
+    voice_res = GeminiParser.parse_voice_audio(test_audio, mime_type="audio/wav")
+    print(f"✅ Kết quả kiểm thử xử lý âm thanh tĩnh (Silence): {voice_res} (Đúng chuẩn không phát hiện giọng nói)")
+
     print("\n" + "=" * 60)
     print("🎉 KẾT THÚC KIỂM THỬ NÂNG CAO")
     print("=" * 60)

@@ -3,5 +3,6 @@ __pycache__/
 .env
 data/*.db
 data/temp_*
+data/test_*
 reports/*.xlsx
 .vscode/

@@ -13,6 +13,7 @@ Dữ liệu tập trung **100% trên Google Sheets trực tuyến**, không cầ
 ## 🌟 Điểm Nổi Bật Của Phiên Bản v1.0
 
 - ⚡ **Ghi chép thu chi 3 giây trên iPhone / Telegram**: Nhập liệu tự nhiên như nhắn tin trò chuyện (`+ 500k tram rang`, `- 70k hoa qua thap huong`...).
+- 🎙️ **Nhận diện Giọng nói (Gemini Multimodal Voice AI)**: Chỉ cần giữ nút Micro nói tự nhiên (VD: *"Hôm nay thu bạn Linh 5 triệu niềng răng chuyển khoản nhé"*), bot tự nghe, hiển thị lại lời thoại và ghi sổ ngay tức thì.
 - 🧠 **Trí tuệ nhân tạo Gemini 3.5 Flash**: Tự động nhận diện số tiền, nội dung, phân loại danh mục nha khoa, dung lỗi chính tả và tiếng Việt không dấu.
 - 🛡️ **Dual-Engine & Tự học (Self-Learning)**: Tự động chuyển đổi sang **Rule Engine** khi AI mất mạng hoặc hết token. Bạn có thể dạy từ mới cho bot ngay khi chat qua lệnh `/hoc`.
 - 📊 **Cơ sở dữ liệu Google Sheets trực tuyến**: 
@@ -72,10 +73,17 @@ flowchart TD
 * `- 1.2tr ck labo rang su chi Nga` ➡️ Chi CK: 1.200.000 ₫, Chi phí Labo.
 * `- 150k mua gang tay y te` ➡️ Chi tiền mặt: 150.000 ₫, Vật tư & Thuốc men.
 
-### 3. Gửi ảnh hóa đơn giấy:
+### 3. Nhập liệu bằng Giọng nói (Voice Message):
+* Nhấn giữ biểu tượng **Micro** trên Telegram và nói tự nhiên:
+  * *"Thu 500k trám răng tiền mặt"*
+  * *"Chị Linh chuyển khoản 5 triệu tiền niềng răng"*
+  * *"Chi 70 nghìn mua hoa quả thắp hương"*
+* ➡️ Gemini Voice AI tự động nghe hiểu, phản hồi lại đoạn text vừa nghe được (`🎙 Lời thoại: ...`) và ghi sổ ngay lập tức!
+
+### 4. Gửi ảnh hóa đơn giấy:
 Chụp ảnh hóa đơn mua thuốc/vật tư gửi trực tiếp vào bot, Gemini Vision tự động nhận diện và lưu vào Google Sheets.
 
-### 4. Cuối tháng - Nhập sao kê ngân hàng:
+### 5. Cuối tháng - Nhập sao kê ngân hàng:
 Kéo thả file Excel/CSV sao kê ngân hàng vào bot, hệ thống tự động bóc tách từng dòng và đẩy lên Google Sheets trong 1 lần gọi.
 
 ---

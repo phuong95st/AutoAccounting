@@ -41,12 +41,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         f"👋 *Xin chào {user.first_name}! Tôi là Trợ Lý Kế Toán Phòng Khám Nha Khoa.*\n\n"
         "💡 *CÁCH GHI THU CHI NHANH (3 GIÂY):*\n"
-        "Bạn chỉ cần gõ nội dung thu chi tự nhiên hoặc gửi ảnh:\n"
         "• `+ 500k khach tram rang` ➡️ Thu tiền mặt\n"
         "• `+ 2tr ck khach Trang boc rang su` ➡️ Khách chuyển khoản\n"
         "• `- 70k hoa qua thap huong` ➡️ Chi tiền mua hoa quả\n"
         "• `- 1.2tr ck labo rang su chi Nga` ➡️ Chi tiền làm labo\n"
-        "• Chụp ảnh hóa đơn/phiếu thu gửi vào đây để AI đọc tự động.\n\n"
+        "• 🎙 *Giọng nói:* Giữ nút Micro nói (VD: *'Thu 500k trám răng'*), AI tự nghe và ghi chép.\n"
+        "• 📸 *Ảnh chụp:* Chụp ảnh hóa đơn/phiếu thu gửi vào đây để AI đọc tự động.\n\n"
         "📌 *CÁC LỆNH QUẢN TRỊ TRÊN GOOGLE SHEETS:*\n"
         "• /sheet : Mở trực tiếp Sổ Quỹ Google Sheets online\n"
         "• /today : Xem nhanh tổng kết thu chi hôm nay\n"
@@ -336,6 +336,66 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error handling photo: {e}")
         await update.message.reply_text(f"❌ Lỗi khi đọc ảnh: {e}")
 
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle voice memo / audio note using Gemini Multimodal Audio."""
+    user_id = update.effective_user.id
+    if not is_user_allowed(user_id):
+        return
+
+    voice = update.message.voice or update.message.audio
+    if not voice:
+        return
+
+    await update.message.reply_text("🎙 Đang lắng nghe và xử lý giọng nói qua Gemini AI... Vui lòng chờ vài giây.")
+
+    try:
+        file = await voice.get_file()
+        file_bytes = await file.download_as_bytearray()
+        mime_type = getattr(voice, "mime_type", "audio/ogg") or "audio/ogg"
+
+        parsed = GeminiParser.parse_voice_audio(bytes(file_bytes), mime_type=mime_type)
+        if not parsed:
+            await update.message.reply_text(
+                "⚠️ Chưa nghe rõ số tiền hoặc nội dung thu chi từ tin nhắn thoại.\n\n"
+                "Bạn vui lòng ghi âm lại rõ hơn (VD: *'Thu 500k trám răng tiền mặt'* hoặc *'Chi 70k hoa quả'*), hoặc nhập bằng text nhé."
+            )
+            return
+
+        tx_id = database.add_transaction(
+            tx_type=parsed.get("type", "chi"),
+            amount=parsed["amount"],
+            category=parsed["category"],
+            description=parsed.get("description", "Ghi âm giọng nói"),
+            payment_method=parsed.get("payment_method", "cash"),
+            source="voice",
+            user_id=user_id
+        )
+
+        is_thu = parsed.get("type") == "thu"
+        sign_text = "🟢 THU VÀO" if is_thu else "🔴 CHI RA"
+        method_text = "💵 Tiền mặt" if parsed.get("payment_method") == "cash" else "💳 Chuyển khoản"
+        transcript = parsed.get("transcript", "")
+        transcript_line = f"🎙 *Lời thoại:* \"_{transcript}_\"\n" if transcript else ""
+
+        msg = (
+            f"✅ *ĐÃ GHI NHẬN GIAO DỊCH #{tx_id}*\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"{transcript_line}"
+            f"• Loại: *{sign_text}*\n"
+            f"• Số tiền: *{format_vnd(parsed['amount'])}*\n"
+            f"• Danh mục: _{parsed['category']}_\n"
+            f"• Nội dung: {parsed.get('description', '')}\n"
+            f"• Hình thức: {method_text}\n"
+            f"• Nơi lưu: _Google Sheets Online_\n"
+            f"• Xử lý: _🎙 Gemini Voice AI_\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"_(Nhập nhầm? Gõ `/xoa {tx_id}` để xóa)_"
+        )
+        await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        logger.error(f"Error handling voice: {e}")
+        await update.message.reply_text(f"❌ Lỗi khi xử lý giọng nói: {e}")
+
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle bank statement files (.xlsx, .xls, .csv)."""
     user_id = update.effective_user.id
@@ -448,6 +508,7 @@ def main():
 
     # Messages
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 

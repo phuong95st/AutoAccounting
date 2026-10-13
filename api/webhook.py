@@ -39,6 +39,29 @@ def send_telegram_message(chat_id: int, text: str, parse_mode: str = "Markdown")
 def format_vnd(amount: int) -> str:
     return f"{amount:,.0f}".replace(",", ".") + " ₫"
 
+def download_telegram_file(file_id: str):
+    """Download file bytes from Telegram Bot API."""
+    token = config.TELEGRAM_BOT_TOKEN
+    if not token or not file_id:
+        return None
+    url = f"https://api.telegram.org/bot{token}/getFile?file_id={file_id}"
+    req = urllib.request.Request(url)
+    try:
+        with urllib.request.urlopen(req, timeout=10, context=ssl_ctx) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if not data.get("ok"):
+                return None
+            file_path = data.get("result", {}).get("file_path")
+            if not file_path:
+                return None
+            down_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+            down_req = urllib.request.Request(down_url)
+            with urllib.request.urlopen(down_req, timeout=15, context=ssl_ctx) as down_resp:
+                return down_resp.read()
+    except Exception as e:
+        print(f"Error downloading telegram file {file_id}: {e}")
+        return None
+
 class handler(BaseHTTPRequestHandler):
     """Vercel Serverless Function Handler for Telegram Webhook."""
 
@@ -65,6 +88,8 @@ class handler(BaseHTTPRequestHandler):
             user_id = user.get("id")
             chat_id = chat.get("id")
             text = (message.get("text") or "").strip()
+            voice = message.get("voice") or message.get("audio")
+            photo = message.get("photo")
 
             # Check permissions
             if config.ALLOWED_TELEGRAM_USERS and user_id not in config.ALLOWED_TELEGRAM_USERS:
@@ -79,12 +104,13 @@ class handler(BaseHTTPRequestHandler):
             if text == "/start" or text == "/help":
                 welcome = (
                     f"👋 *Xin chào {user.get('first_name', '')}! Tôi là Trợ Lý Kế Toán Phòng Khám Nha Khoa.*\n\n"
-                    "💡 *CÁCH GHI THU CHI NHANH (3 GIÂY):*\n"
+                    "💡 *CÁCH GHI THU CHI NHANH:*\n"
                     "• `+ 500k khach tram rang` ➡️ Thu tiền mặt\n"
                     "• `+ 2tr ck khach Trang boc rang su` ➡️ Khách chuyển khoản\n"
                     "• `- 70k hoa qua thap huong` ➡️ Chi tiền mua hoa quả\n"
                     "• `- 1.2tr ck labo rang su chi Nga` ➡️ Chi tiền làm labo\n"
-                    "• Chụp ảnh hóa đơn/phiếu thu gửi vào đây để AI đọc tự động.\n\n"
+                    "• 🎙 *Giọng nói:* Giữ nút Micro nói (VD: *'Thu 500k trám răng'*), AI tự nghe và ghi chép.\n"
+                    "• 📸 *Ảnh chụp:* Chụp hóa đơn/phiếu thu gửi vào đây để AI đọc tự động.\n\n"
                     "📌 *CÁC LỆNH QUẢN TRỊ TRÊN GOOGLE SHEETS:*\n"
                     "• /sheet : Mở trực tiếp Sổ Quỹ Google Sheets online\n"
                     "• /today : Xem nhanh tổng kết thu chi hôm nay\n"
@@ -203,9 +229,99 @@ class handler(BaseHTTPRequestHandler):
                 else:
                     send_telegram_message(chat_id, "⚠️ Cú pháp: `/hoc <từ khóa> = <thu/chi>: <danh mục>`")
 
+            elif voice:
+                # ==========================================
+                # 2. XỬ LÝ TIN NHẮN THOẠI (VOICE MESSAGE)
+                # ==========================================
+                send_telegram_message(chat_id, "🎙 Đang lắng nghe và xử lý tin nhắn thoại qua Gemini AI...")
+                file_id = voice.get("file_id")
+                mime_type = voice.get("mime_type", "audio/ogg")
+                audio_bytes = download_telegram_file(file_id)
+                if not audio_bytes:
+                    send_telegram_message(chat_id, "❌ Không thể tải file âm thanh từ Telegram.")
+                else:
+                    parsed = GeminiParser.parse_voice_audio(audio_bytes, mime_type=mime_type)
+                    if not parsed:
+                        send_telegram_message(
+                            chat_id,
+                            "⚠️ Chưa nghe rõ số tiền hoặc nội dung thu chi từ tin nhắn thoại.\n\n"
+                            "Bạn hãy nói rõ hơn (VD: *'Thu 500k trám răng tiền mặt'* hoặc *'Chi 70k hoa quả'*), hoặc gõ text nhé."
+                        )
+                    else:
+                        tx_id = database.add_transaction(
+                            tx_type=parsed.get("type", "chi"),
+                            amount=parsed["amount"],
+                            category=parsed["category"],
+                            description=parsed.get("description", "Ghi âm giọng nói"),
+                            payment_method=parsed.get("payment_method", "cash"),
+                            source="voice",
+                            user_id=user_id
+                        )
+                        is_thu = parsed.get("type") == "thu"
+                        sign_text = "🟢 THU VÀO" if is_thu else "🔴 CHI RA"
+                        method_text = "💵 Tiền mặt" if parsed.get("payment_method") == "cash" else "💳 Chuyển khoản"
+                        transcript = parsed.get("transcript", "")
+                        transcript_line = f"🎙 *Lời thoại:* \"_{transcript}_\"\n" if transcript else ""
+
+                        msg = (
+                            f"✅ *ĐÃ GHI NHẬN GIAO DỊCH #{tx_id}*\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"{transcript_line}"
+                            f"• Loại: *{sign_text}*\n"
+                            f"• Số tiền: *{format_vnd(parsed['amount'])}*\n"
+                            f"• Danh mục: _{parsed['category']}_\n"
+                            f"• Nội dung: {parsed.get('description', '')}\n"
+                            f"• Hình thức: {method_text}\n"
+                            f"• Nơi lưu: _Google Sheets Online_\n"
+                            f"• Xử lý: _🎙 Gemini Voice AI_\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"_(Nhập nhầm? Gõ `/xoa {tx_id}` để xóa)_"
+                        )
+                        send_telegram_message(chat_id, msg)
+
+            elif photo:
+                # ==========================================
+                # 3. XỬ LÝ HÓA ĐƠN CHỤP ẢNH (GEMINI VISION OCR)
+                # ==========================================
+                send_telegram_message(chat_id, "📸 Đang quét hóa đơn bằng Gemini Vision...")
+                file_id = photo[-1].get("file_id")
+                img_bytes = download_telegram_file(file_id)
+                if not img_bytes:
+                    send_telegram_message(chat_id, "❌ Không thể tải ảnh từ Telegram.")
+                else:
+                    parsed = GeminiParser.parse_receipt_image(img_bytes, mime_type="image/jpeg")
+                    if not parsed:
+                        send_telegram_message(chat_id, "⚠️ Không nhận diện được hóa đơn từ ảnh. Bạn vui lòng chụp rõ nét hơn hoặc nhập tay bằng text.")
+                    else:
+                        tx_id = database.add_transaction(
+                            tx_type=parsed.get("type", "chi"),
+                            amount=parsed["amount"],
+                            category=parsed["category"],
+                            description=parsed.get("description", "Hóa đơn chụp"),
+                            payment_method=parsed.get("payment_method", "cash"),
+                            source="ocr",
+                            user_id=user_id
+                        )
+                        sign_text = "🟢 THU VÀO" if parsed.get("type") == "thu" else "🔴 CHI RA"
+                        method_text = "💵 Tiền mặt" if parsed.get("payment_method") == "cash" else "💳 Chuyển khoản"
+                        msg = (
+                            f"🧾 *ĐÃ QUÉT VÀ LƯU HÓA ĐƠN #{tx_id}*\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"• Loại: *{sign_text}*\n"
+                            f"• Số tiền: *{format_vnd(parsed['amount'])}*\n"
+                            f"• Danh mục: _{parsed['category']}_\n"
+                            f"• Nội dung: {parsed.get('description', '')}\n"
+                            f"• Hình thức: {method_text}\n"
+                            f"• Nơi lưu: _Google Sheets Online_\n"
+                            f"• Nguồn: _Gemini Vision OCR_\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"_(Nhập nhầm? Gõ `/xoa {tx_id}` để xóa)_"
+                        )
+                        send_telegram_message(chat_id, msg)
+
             elif text:
                 # ==========================================
-                # 2. XỬ LÝ NHẬP TIỀN BẰNG TEXT
+                # 4. XỬ LÝ NHẬP TIỀN BẰNG TEXT
                 # ==========================================
                 parsed = GeminiParser.parse_text(text)
                 if not parsed:
