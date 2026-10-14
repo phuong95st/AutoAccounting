@@ -471,23 +471,82 @@ class BankStatementParser:
         """
         results = []
 
-        # 1. Thử bóc tách nhanh bằng pypdf
+        # 1. Thử bóc tách nâng cao bằng pypdf (phân tích bảng theo tọa độ cột & dòng)
         if pypdf:
             try:
                 reader = pypdf.PdfReader(str(file_path))
+                
+                # Cách 1: Phân tích tọa độ không gian (chính xác tuyệt đối cho sao kê bảng cột như Techcombank, VCB, MB, ACB...)
+                coord_results = []
+                for page in reader.pages:
+                    items = []
+                    def visitor(text, cm, tm, fontDict, fontSize):
+                        if text.strip():
+                            items.append({'x': tm[4], 'y': tm[5], 'text': text.strip()})
+                    page.extract_text(visitor_text=visitor)
+                    
+                    rows = []
+                    items.sort(key=lambda it: -it['y'])
+                    for it in items:
+                        matched_row = None
+                        for r in rows:
+                            if abs(r['y'] - it['y']) <= 3.5:
+                                matched_row = r
+                                break
+                        if matched_row:
+                            matched_row['items'].append(it)
+                        else:
+                            rows.append({'y': it['y'], 'items': [it]})
+                            
+                    for r in rows:
+                        r_items = sorted(r['items'], key=lambda it: it['x'])
+                        # Kiểm tra có ngày ở cột đầu
+                        date_item = next((it for it in r_items if it['x'] < 110 and re.match(r'^\d{1,2}[/-]\d{1,2}[/-]\d{4}$', it['text'])), None)
+                        if date_item:
+                            date_str = database.parse_vn_date(date_item['text'])
+                            # Phân loại Cột Nợ (Debit) và Cột Có (Credit) theo tọa độ bảng
+                            debit_item = next((it for it in r_items if 520 <= it['x'] < 640 and re.match(r'^[1-9]\d{0,2}(?:[.,]\d{3})*$', it['text'])), None)
+                            credit_item = next((it for it in r_items if 640 <= it['x'] < 745 and re.match(r'^[1-9]\d{0,2}(?:[.,]\d{3})*$', it['text'])), None)
+                            desc_items = [it['text'] for it in r_items if 100 <= it['x'] < 520]
+                            desc_clean = ' '.join(desc_items).strip()
+                            
+                            if debit_item:
+                                amt = clean_statement_num(debit_item['text'])
+                                tx_type = "chi"
+                            elif credit_item:
+                                amt = clean_statement_num(credit_item['text'])
+                                tx_type = "thu"
+                            else:
+                                continue
+                                
+                            if amt > 0:
+                                parsed = RuleEngine.parse(f"{'+' if tx_type == 'thu' else '-'} {amt} {desc_clean}")
+                                category = parsed["category"] if parsed else ("Doanh thu Dịch vụ" if tx_type == "thu" else "Chi khác")
+                                coord_results.append({
+                                    "date": date_str,
+                                    "type": tx_type,
+                                    "amount": amt,
+                                    "category": category,
+                                    "description": desc_clean,
+                                    "payment_method": "transfer",
+                                    "source": "bank_statement"
+                                })
+
+                if coord_results:
+                    return coord_results
+
+                # Cách 2: Regex fallback nếu không khớp layout tọa độ chuẩn
                 full_text = ""
                 for page in reader.pages:
                     full_text += (page.extract_text() or "") + "\n"
 
                 lines = full_text.splitlines()
-                # Pattern tìm dòng giao dịch: Ngày (dd/mm/yyyy) + Số tiền + Nội dung
                 date_pattern = r'(\d{1,2}[/-]\d{1,2}[/-]\d{4})'
                 for line in lines:
                     line_str = line.strip()
                     d_match = re.search(date_pattern, line_str)
                     if d_match:
                         date_str = database.parse_vn_date(d_match.group(1))
-                        # Tìm các chuỗi số tiền dạng 1.500.000 hoặc 500,000
                         num_matches = re.findall(r'(\+|-)?\s*([1-9]\d{0,2}(?:[.,]\d{3})+)', line_str)
                         if num_matches:
                             sign, amt_str = num_matches[0]
@@ -495,7 +554,6 @@ class BankStatementParser:
                             if amt > 0:
                                 is_thu = sign == "+" or "có" in line_str.lower() or "cr" in line_str.lower() or "nhận" in line_str.lower()
                                 tx_type = "thu" if is_thu else "chi"
-                                # Làm sạch diễn giải
                                 desc = re.sub(date_pattern, '', line_str)
                                 desc = re.sub(r'(\+|-)?\s*([1-9]\d{0,2}(?:[.,]\d{3})+)', '', desc)
                                 desc_clean = re.sub(r'\s+', ' ', desc).strip()
@@ -515,7 +573,7 @@ class BankStatementParser:
             except Exception as e:
                 print(f"Lỗi đọc PDF bằng pypdf: {e}")
 
-        # 2. Nếu pypdf không lấy được dòng nào (hoặc PDF dạng bảng phức tạp / scan)
+        # 3. Nếu pypdf không lấy được dòng nào (hoặc PDF dạng bảng phức tạp / scan)
         # -> Chuyển giao ngay cho Gemini Multimodal Document AI
         if not results:
             try:
