@@ -54,7 +54,20 @@ function doPost(e) {
     }
 
     // ----------------------------------------------------
-    // B. XỬ LÝ LỆNH THÊM GIAO DỊCH (ADD)
+    // B. XỬ LÝ LƯU CẤU HÌNH HỆ THỐNG (SET_SETTING)
+    // ----------------------------------------------------
+    if (payload.action === "set_setting") {
+      var sKey = String(payload.key || "").trim();
+      var sVal = String(payload.value !== undefined ? payload.value : "").trim();
+      if (sKey) {
+        PropertiesService.getScriptProperties().setProperty(sKey, sVal);
+        return jsonResponse({ status: "success", key: sKey, value: sVal });
+      }
+      return jsonResponse({ status: "error", message: "Thiếu tham số key cấu hình" });
+    }
+
+    // ----------------------------------------------------
+    // C. XỬ LÝ LỆNH THÊM GIAO DỊCH (ADD)
     // ----------------------------------------------------
     var items = [];
     if (payload.action === "add" && payload.data) {
@@ -163,6 +176,15 @@ function doGet(e) {
       var sheets = getAllYearSheets(ss);
       var sheetNames = sheets.map(function(s) { return s.getName(); });
       return jsonResponse({ status: "ok", message: "Google Sheets Multi-Year DB Online", sheets: sheetNames });
+    }
+
+    // ----------------------------------------------------
+    // TRUY VẤN CẤU HÌNH HỆ THỐNG (GET_SETTING)
+    // ----------------------------------------------------
+    if (action === "get_setting") {
+      var gKey = (e && e.parameter && e.parameter.key) ? String(e.parameter.key).trim() : "";
+      var gVal = gKey ? (PropertiesService.getScriptProperties().getProperty(gKey) || "") : "";
+      return jsonResponse({ status: "ok", key: gKey, value: gVal });
     }
 
     // ----------------------------------------------------

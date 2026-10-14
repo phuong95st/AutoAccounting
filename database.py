@@ -738,3 +738,23 @@ def download_online_excel() -> Optional[Path]:
     except Exception as e:
         print(f"Không thể tải file trực tiếp từ Google Sheets: {e}")
         return None
+
+def save_setting(key: str, value: str) -> bool:
+    """Lưu cấu hình hệ thống (key-value) lên Google Sheets PropertiesService để bảo toàn vĩnh viễn trên serverless."""
+    try:
+        res = _call_sheets_api(payload={"action": "set_setting", "key": key, "value": value})
+        return bool(res and res.get("status") == "success")
+    except Exception as e:
+        print(f"Lỗi khi lưu cấu hình lên Google Sheets: {e}")
+        return False
+
+def get_setting(key: str) -> Optional[str]:
+    """Truy vấn cấu hình hệ thống (key-value) từ Google Sheets PropertiesService."""
+    try:
+        res = _call_sheets_api(params={"action": "get_setting", "key": key})
+        if res and res.get("status") == "ok":
+            return res.get("value")
+    except Exception as e:
+        print(f"Lỗi khi đọc cấu hình từ Google Sheets: {e}")
+    return None
+

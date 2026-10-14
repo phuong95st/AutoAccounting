@@ -24,17 +24,35 @@ class RulesManager:
         self.rules = self.load()
 
     def load(self) -> Dict[str, Any]:
-        if not self.filepath.exists():
-            return {"categories": {"thu": [], "chi": []}, "learned_rules": []}
-        try:
-            with open(self.filepath, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Error loading rules: {e}")
-            return {"categories": {"thu": [], "chi": []}, "learned_rules": []}
+        data = None
+        if self.filepath.exists():
+            try:
+                with open(self.filepath, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception as e:
+                print(f"Error loading rules from {self.filepath}: {e}")
+
+        # Tự động nạp từ file mẫu gốc trong repository nếu chạy trên môi trường serverless (như Vercel /tmp)
+        bundled_path = config.BASE_DIR / "data" / "skills_and_rules.json"
+        if not data and bundled_path.exists() and bundled_path != self.filepath:
+            try:
+                with open(bundled_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                # Seed sang thư mục tạm để phục vụ các thao tác tiếp theo
+                try:
+                    self.filepath.parent.mkdir(parents=True, exist_ok=True)
+                    with open(self.filepath, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+            except Exception as e:
+                print(f"Error loading bundled rules: {e}")
+
+        return data or {"categories": {"thu": [], "chi": []}, "learned_rules": []}
 
     def save(self):
         try:
+            self.filepath.parent.mkdir(parents=True, exist_ok=True)
             with open(self.filepath, "w", encoding="utf-8") as f:
                 json.dump(self.rules, f, ensure_ascii=False, indent=2)
         except Exception as e:
@@ -57,13 +75,65 @@ class RulesManager:
         self.save()
 
     def get_statement_password(self) -> str:
-        """Get saved default password for bank statement zip files."""
-        return self.rules.get("statement_password", "").strip() or config.BANK_STATEMENT_PASSWORD
+        """Get saved default password for bank statement zip files with multi-tier fallback."""
+        # 1. Từ bộ nhớ đang nạp
+        pwd = self.rules.get("statement_password", "").strip()
+        if pwd:
+            return pwd
+
+        # 2. Từ biến môi trường (BANK_STATEMENT_PASSWORD trên Vercel hoặc file .env)
+        if config.BANK_STATEMENT_PASSWORD:
+            return config.BANK_STATEMENT_PASSWORD
+
+        # 3. Từ file repo gốc nếu đang chạy serverless mà chưa sync
+        bundled_path = config.BASE_DIR / "data" / "skills_and_rules.json"
+        if bundled_path.exists() and bundled_path != self.filepath:
+            try:
+                with open(bundled_path, "r", encoding="utf-8") as f:
+                    d = json.load(f)
+                    b_pwd = d.get("statement_password", "").strip()
+                    if b_pwd:
+                        self.rules["statement_password"] = b_pwd
+                        return b_pwd
+            except Exception:
+                pass
+
+        # 4. Từ Google Sheets PropertiesService (lưu trữ cloud vĩnh viễn)
+        try:
+            import database
+            sheet_pwd = database.get_setting("statement_password")
+            if sheet_pwd:
+                self.rules["statement_password"] = sheet_pwd.strip()
+                return sheet_pwd.strip()
+        except Exception:
+            pass
+
+        return ""
 
     def set_statement_password(self, password: str):
-        """Save default password for bank statement zip files."""
-        self.rules["statement_password"] = password.strip()
+        """Save default password for bank statement zip files across local, repo, and Google Sheets."""
+        clean_pwd = password.strip()
+        self.rules["statement_password"] = clean_pwd
         self.save()
+
+        # Cố gắng lưu đè vào file repo nếu có quyền ghi (môi trường dev / local)
+        bundled_path = config.BASE_DIR / "data" / "skills_and_rules.json"
+        if bundled_path.exists() and bundled_path != self.filepath:
+            try:
+                with open(bundled_path, "r", encoding="utf-8") as f:
+                    d = json.load(f)
+                d["statement_password"] = clean_pwd
+                with open(bundled_path, "w", encoding="utf-8") as f:
+                    json.dump(d, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+
+        # Đồng bộ lưu vĩnh viễn lên Google Sheets để toàn bộ serverless containers đều truy cập được
+        try:
+            import database
+            database.save_setting("statement_password", clean_pwd)
+        except Exception as e:
+            print(f"Error syncing statement password to Google Sheets: {e}")
 
     def get_learned_rules_text(self) -> str:
         lines = []

@@ -4,5 +4,6 @@ __pycache__/
 data/*.db
 data/temp_*
 data/test_*
-reports/*.xlsx
+reports/*
+!reports/.gitkeep
 .vscode/

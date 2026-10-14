@@ -397,51 +397,55 @@ class TestAutoAccountingV2Release(unittest.TestCase):
         import pyzipper
         from bank_reconciler import BankStatementParser
 
-        # 1. Test set/get password in rules_mgr
-        rules_mgr.set_statement_password("testpass123")
-        self.assertEqual(rules_mgr.get_statement_password(), "testpass123")
-
-        # 2. Tạo một file zip có mật khẩu AES-256 chứa 1 file csv giao dịch giả lập
-        sample_csv_content = (
-            "Ngay,SoTien,NoiDung\n"
-            "13/10/2026,1500000,Khach Hang Nguyen Van A CK lam rang\n"
-        ).encode("utf-8")
-
-        zip_path = BASE_DIR / "test_encrypted.zip"
-        with pyzipper.AESZipFile(
-            zip_path,
-            "w",
-            compression=pyzipper.ZIP_DEFLATED,
-            encryption=pyzipper.WZ_AES
-        ) as zf:
-            zf.setpassword(b"testpass123")
-            zf.writestr("statement.csv", sample_csv_content)
-
-        extracted_files = []
+        original_pwd = rules_mgr.get_statement_password()
         try:
-            # Test giải nén với mật khẩu đúng (tự lấy từ rules_mgr)
-            extracted_files, err = BankStatementParser.extract_zip_archive(zip_path, password=None)
-            self.assertIsNone(err)
-            self.assertTrue(len(extracted_files) > 0)
-            self.assertTrue(any(f.name.endswith(".csv") for f in extracted_files))
+            # 1. Test set/get password in rules_mgr
+            rules_mgr.set_statement_password("testpass123")
+            self.assertEqual(rules_mgr.get_statement_password(), "testpass123")
 
-            # Test parse_statement_file trên file zip
-            txs, err = BankStatementParser.parse_statement_file(zip_path, password="testpass123")
-            self.assertIsNone(err)
-            self.assertEqual(len(txs), 1)
-            self.assertEqual(txs[0]["amount"], 1500000)
-            self.assertIn("lam rang", txs[0]["description"])
+            # 2. Tạo một file zip có mật khẩu AES-256 chứa 1 file csv giao dịch giả lập
+            sample_csv_content = (
+                "Ngay,SoTien,NoiDung\n"
+                "13/10/2026,1500000,Khach Hang Nguyen Van A CK lam rang\n"
+            ).encode("utf-8")
+
+            zip_path = BASE_DIR / "test_encrypted.zip"
+            with pyzipper.AESZipFile(
+                zip_path,
+                "w",
+                compression=pyzipper.ZIP_DEFLATED,
+                encryption=pyzipper.WZ_AES
+            ) as zf:
+                zf.setpassword(b"testpass123")
+                zf.writestr("statement.csv", sample_csv_content)
+
+            extracted_files = []
+            try:
+                # Test giải nén với mật khẩu đúng (tự lấy từ rules_mgr)
+                extracted_files, err = BankStatementParser.extract_zip_archive(zip_path, password=None)
+                self.assertIsNone(err)
+                self.assertTrue(len(extracted_files) > 0)
+                self.assertTrue(any(f.name.endswith(".csv") for f in extracted_files))
+
+                # Test parse_statement_file trên file zip
+                txs, err = BankStatementParser.parse_statement_file(zip_path, password="testpass123")
+                self.assertIsNone(err)
+                self.assertEqual(len(txs), 1)
+                self.assertEqual(txs[0]["amount"], 1500000)
+                self.assertIn("lam rang", txs[0]["description"])
+            finally:
+                # Dọn dẹp
+                if zip_path.exists():
+                    zip_path.unlink()
+                for f in extracted_files:
+                    if f.exists():
+                        f.unlink()
+
+            # 3. Test xóa mật khẩu
+            rules_mgr.set_statement_password("")
+            self.assertEqual(rules_mgr.get_statement_password(), "")
         finally:
-            # Dọn dẹp
-            if zip_path.exists():
-                zip_path.unlink()
-            for f in extracted_files:
-                if f.exists():
-                    f.unlink()
-
-        # 3. Test xóa mật khẩu
-        rules_mgr.set_statement_password("")
-        self.assertEqual(rules_mgr.get_statement_password(), "")
+            rules_mgr.set_statement_password(original_pwd)
 
 if __name__ == "__main__":
     print("\n" + "=" * 70)

@@ -55,13 +55,14 @@ class BankStatementParser:
     """
 
     @classmethod
-    def parse_statement_file(cls, file_path: Path, password: Optional[str] = None) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    def parse_statement_file(cls, file_path: Union[str, Path], password: Optional[str] = None) -> Tuple[List[Dict[str, Any]], Optional[str]]:
         """
         Hàm điều phối phân tích tập tin sao kê dựa theo định dạng file.
         Returns:
             (transactions_list, error_code)
             - error_code: None nếu thành công, hoặc 'PASSWORD_REQUIRED', 'BAD_PASSWORD', 'UNSUPPORTED_FORMAT', 'EMPTY_FILE'
         """
+        file_path = Path(file_path)
         ext = file_path.suffix.lower()
 
         # 1. TỆP NÉN .ZIP
@@ -161,7 +162,8 @@ class BankStatementParser:
         if not decrypt_success:
             shutil.rmtree(extract_dir, ignore_errors=True)
             if is_encrypted:
-                return [], "PASSWORD_REQUIRED" if not password else "BAD_PASSWORD"
+                has_passwords_tried = any(p is not None for p in passwords_to_try)
+                return [], "BAD_PASSWORD" if has_passwords_tried else "PASSWORD_REQUIRED"
             return [], "CORRUPTED_ZIP"
 
         # Quét tìm các file bảng tính / PDF bên trong

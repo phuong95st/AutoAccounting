@@ -531,15 +531,26 @@ def process_telegram_update(update: dict):
             items, err_code = BankStatementParser.parse_statement_file(temp_path, password=candidate_pwd)
 
             if err_code in ["PASSWORD_REQUIRED", "BAD_PASSWORD"]:
-                send_telegram_message(
-                    chat_id,
-                    "🔒 *FILE ZIP ĐƯỢC BẢO VỆ BẰNG MẬT KHẨU!*\n"
-                    "━━━━━━━━━━━━━━━━━━\n"
-                    "File sao kê nén từ ứng dụng ngân hàng có đặt mật khẩu bảo vệ.\n\n"
-                    "👉 *Cách xử lý nhanh (chỉ cần làm 1 lần):*\n"
-                    "1. Gõ lệnh: `/matkhau <mật khẩu_của_bạn>` (VD: Số CCCD hoặc Ngày sinh) để lưu sẵn. Lần sau gửi file ZIP bot sẽ tự động mở!\n"
-                    "2. Hoặc gửi lại file ZIP và điền mật khẩu vào ô **Chú thích (Caption)**."
-                )
+                if err_code == "BAD_PASSWORD":
+                    send_telegram_message(
+                        chat_id,
+                        "🔒 *MẬT KHẨU GIẢI NÉN KHÔNG ĐÚNG!*\n"
+                        "━━━━━━━━━━━━━━━━━━\n"
+                        "Mật khẩu sao kê đã lưu hoặc mật khẩu trong chú thích không mở được file ZIP này.\n\n"
+                        "👉 *Cách xử lý:*\n"
+                        "• Cập nhật lại mật khẩu đúng: `/matkhau <mật khẩu_mới>` (VD: Số CCCD hoặc Ngày sinh)\n"
+                        "• Hoặc gửi lại file ZIP và điền mật khẩu vào ô **Chú thích (Caption)**."
+                    )
+                else:
+                    send_telegram_message(
+                        chat_id,
+                        "🔒 *FILE ZIP ĐƯỢC BẢO VỆ BẰNG MẬT KHẨU!*\n"
+                        "━━━━━━━━━━━━━━━━━━\n"
+                        "File sao kê nén từ ứng dụng ngân hàng có đặt mật khẩu bảo vệ.\n\n"
+                        "👉 *Cách xử lý nhanh (chỉ cần làm 1 lần):*\n"
+                        "1. Gõ lệnh: `/matkhau <mật khẩu_của_bạn>` (VD: Số CCCD hoặc Ngày sinh) để lưu sẵn. Lần sau gửi file ZIP bot sẽ tự động mở!\n"
+                        "2. Hoặc gửi lại file ZIP và điền mật khẩu vào ô **Chú thích (Caption)**."
+                    )
                 return
 
             if not items:
