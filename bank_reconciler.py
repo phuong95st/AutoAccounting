@@ -120,16 +120,16 @@ class BankStatementParser:
         # Thu thập các ứng viên mật khẩu
         passwords_to_try = []
         if password and password.strip():
-            # Nếu người dùng chủ động truyền mật khẩu riêng (trong Caption), ưu tiên thử mật khẩu này
+            # Người dùng chủ động truyền mật khẩu riêng (trong Caption hoặc tham số gọi)
             passwords_to_try.append(password.strip())
         else:
-            # Nếu không truyền mật khẩu riêng trong caption, tự động dùng mật khẩu đã lưu hoặc cấu hình
+            # Người dùng không truyền mật khẩu riêng -> Tự động lấy mật khẩu mặc định đã lưu
             saved_pass = rules_mgr.get_statement_password()
-            if saved_pass and saved_pass not in passwords_to_try:
-                passwords_to_try.append(saved_pass)
+            if saved_pass and saved_pass.strip():
+                passwords_to_try.append(saved_pass.strip())
 
-            if config.BANK_STATEMENT_PASSWORD and config.BANK_STATEMENT_PASSWORD not in passwords_to_try:
-                passwords_to_try.append(config.BANK_STATEMENT_PASSWORD)
+            if config.BANK_STATEMENT_PASSWORD and config.BANK_STATEMENT_PASSWORD.strip():
+                passwords_to_try.append(config.BANK_STATEMENT_PASSWORD.strip())
 
         # Luôn thử cả trường hợp không cần mật khẩu
         passwords_to_try.append(None)
@@ -165,7 +165,7 @@ class BankStatementParser:
         if not decrypt_success:
             shutil.rmtree(extract_dir, ignore_errors=True)
             if is_encrypted:
-                has_passwords_tried = any(p is not None for p in passwords_to_try)
+                has_passwords_tried = any(bool(p and p.strip()) for p in passwords_to_try)
                 return [], "BAD_PASSWORD" if has_passwords_tried else "PASSWORD_REQUIRED"
             return [], "CORRUPTED_ZIP"
 

@@ -48,6 +48,21 @@ class RulesManager:
             except Exception as e:
                 print(f"Error loading bundled rules: {e}")
 
+        # Tầng bảo vệ dự phòng: Nạp trực tiếp từ module Python default_rules nếu không tìm thấy file json
+        if not data:
+            try:
+                from default_rules import DEFAULT_RULES
+                import copy
+                data = copy.deepcopy(DEFAULT_RULES)
+                try:
+                    self.filepath.parent.mkdir(parents=True, exist_ok=True)
+                    with open(self.filepath, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+            except Exception as e:
+                print(f"Error loading default_rules module: {e}")
+
         return data or {"categories": {"thu": [], "chi": []}, "learned_rules": []}
 
     def save(self):
@@ -98,7 +113,17 @@ class RulesManager:
             except Exception:
                 pass
 
-        # 4. Từ Google Sheets PropertiesService (lưu trữ cloud vĩnh viễn)
+        # 4. Từ module Python default_rules (luôn có sẵn trong gói build Vercel)
+        try:
+            from default_rules import DEFAULT_RULES
+            def_pwd = str(DEFAULT_RULES.get("statement_password", "")).strip()
+            if def_pwd:
+                self.rules["statement_password"] = def_pwd
+                return def_pwd
+        except Exception:
+            pass
+
+        # 5. Từ Google Sheets PropertiesService (lưu trữ cloud vĩnh viễn)
         try:
             import database
             sheet_pwd = database.get_setting("statement_password")

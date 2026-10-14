@@ -87,15 +87,17 @@ def notify_sheets_error(chat_id: int):
     )
     send_telegram_message(chat_id, msg)
 
-def extract_password_from_caption(caption: str) -> str:
+def extract_password_from_caption(caption: str) -> Optional[str]:
     """Trích xuất mật khẩu từ phần chú thích (caption) của tệp đính kèm."""
     if not caption:
         return None
     c = caption.strip()
-    m = re.search(r'(?:pass|mk|mat\s*khau|mật\s*khẩu)\s*[:=]?\s*(\S+)', c, re.IGNORECASE)
+    # 1. Có từ khóa tiền tố: pass: 123456, mk: 0303..., mat khau: ...
+    m = re.search(r'(?:pass(?:word)?|mk|mat\s*khau|mật\s*khẩu)\s*[:=]?\s*(\S+)', c, re.IGNORECASE)
     if m:
         return m.group(1).strip()
-    if re.match(r'^[a-zA-Z0-9@#\-_]{4,20}$', c):
+    # 2. Hoặc toàn bộ caption chỉ là một chuỗi số (CCCD, Ngày sinh: 6 - 16 chữ số)
+    if re.match(r'^\d{6,16}$', c):
         return c
     return None
 
