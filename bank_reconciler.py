@@ -288,7 +288,7 @@ class BankStatementParser:
     @staticmethod
     def _detect_statement_columns(headers: List[str]) -> Tuple[Optional[int], Optional[int], Optional[int], Optional[int], Optional[int], Optional[int], Optional[int], Optional[int]]:
         """
-        Nhận diện thông minh các chỉ số cột:
+        Nhận diện thông minh các chỉ số cột (bao phủ toàn bộ quy ước của các ngân hàng Việt Nam):
         Returns: (col_date, col_desc, col_in, col_out, col_amount, col_type, col_partner, col_ref)
         """
         col_date = None
@@ -304,21 +304,21 @@ class BankStatementParser:
             val = remove_accents(str(raw_h or '')).lower().strip()
             if not val:
                 continue
-            if any(k in val for k in ['ngay', 'date', 'thoi gian', 'tgian', 'posting date', 'trans date']) and col_date is None:
+            if any(k in val for k in ['ngay', 'date', 'thoi gian', 'tgian', 'posting date', 'trans date', 'txn date', 'effective date', 'val date']) and col_date is None:
                 col_date = c_idx
-            elif any(k in val for k in ['doi tac', 'remitter', 'beneficiary', 'nguoi gui', 'nguoi nhan', 'partner']) and col_partner is None:
+            elif any(k in val for k in ['doi tac', 'remitter', 'beneficiary', 'nguoi gui', 'nguoi nhan', 'partner', 'nguoi huong', 'thu huong', 'sender']) and col_partner is None:
                 col_partner = c_idx
-            elif any(k in val for k in ['so but toan', 'ma gd', 'so giao dich', 'so tham chieu', 'transaction no', 'trans no']) and col_ref is None:
+            elif any(k in val for k in ['so but toan', 'ma gd', 'so giao dich', 'so tham chieu', 'so chung tu', 'so ct', 'transaction no', 'trans no', 'ref no', 'trace']) and col_ref is None:
                 col_ref = c_idx
-            elif any(k in val for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung', 'ghi chu', 'remark', 'thong tin', 'details']) and col_desc is None:
+            elif any(k in val for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung', 'ghi chu', 'remark', 'thong tin', 'details', 'memo']) and col_desc is None:
                 col_desc = c_idx
-            elif any(k in val for k in ['ghi co', 'tien vao', 'phat sinh tang', 'credit', 'co (+)', 'co(+)', 'phat sinh co', 'co tktt']):
+            elif (val in ['co', 'credit', 'thu', 'c'] or any(k in val for k in ['ghi co', 'tien vao', 'phat sinh tang', 'co (+)', 'co(+)', 'phat sinh co', 'co tktt', 'so tien co', 'so tien ghi co', 'gui vao'])):
                 col_in = c_idx
-            elif any(k in val for k in ['ghi no', 'tien ra', 'phat sinh giam', 'debit', 'no (-)', 'no(-)', 'phat sinh no', 'no tktt']):
+            elif (val in ['no', 'debit', 'chi', 'd'] or any(k in val for k in ['ghi no', 'tien ra', 'phat sinh giam', 'no (-)', 'no(-)', 'phat sinh no', 'no tktt', 'so tien no', 'so tien ghi no', 'rut ra'])):
                 col_out = c_idx
             elif any(k in val for k in ['loai gd', 'loai giao dich', 'cr/dr', 'd/c', 'type', 'loai', 'chieu gd']) and col_type is None:
                 col_type = c_idx
-            elif any(k in val for k in ['so tien', 'sotien', 'amount', 'phat sinh', 'tong tien', 'so tien gd']) and col_amount is None:
+            elif any(k in val for k in ['so tien', 'sotien', 'amount', 'phat sinh', 'tong tien', 'so tien gd', 'gia tri gd', 'tri gia']) and col_amount is None:
                 col_amount = c_idx
 
         return col_date, col_desc, col_in, col_out, col_amount, col_type, col_partner, col_ref
@@ -339,6 +339,14 @@ class BankStatementParser:
                 header_row_idx = row_idx
                 col_date, col_desc, col_in, col_out, col_amount, col_type, col_partner, col_ref = c_date, c_desc, c_in, c_out, c_amt, c_type, c_partner, c_ref
                 break
+            elif row_idx < sheet.max_row:
+                next_vals = [str(sheet.cell(row=row_idx + 1, column=c).value or '') for c in range(1, sheet.max_column + 1)]
+                merged_vals = [f"{v1} {v2}".strip() for v1, v2 in zip(row_vals, next_vals)]
+                m_date, m_desc, m_in, m_out, m_amt, m_type, m_partner, m_ref = cls._detect_statement_columns(merged_vals)
+                if m_date is not None and (m_in is not None or m_out is not None or m_amt is not None):
+                    header_row_idx = row_idx + 1
+                    col_date, col_desc, col_in, col_out, col_amount, col_type, col_partner, col_ref = m_date, m_desc, m_in, m_out, m_amt, m_type, m_partner, m_ref
+                    break
 
         if not header_row_idx:
             header_row_idx = 1
@@ -444,6 +452,14 @@ class BankStatementParser:
                 header_row_idx = row_idx
                 col_date, col_desc, col_in, col_out, col_amount, col_type, col_partner, col_ref = c_date, c_desc, c_in, c_out, c_amt, c_type, c_partner, c_ref
                 break
+            elif row_idx < sheet.nrows - 1:
+                next_vals = [str(sheet.cell_value(row_idx + 1, c) or '') for c in range(sheet.ncols)]
+                merged_vals = [f"{v1} {v2}".strip() for v1, v2 in zip(row_vals, next_vals)]
+                m_date, m_desc, m_in, m_out, m_amt, m_type, m_partner, m_ref = cls._detect_statement_columns(merged_vals)
+                if m_date is not None and (m_in is not None or m_out is not None or m_amt is not None):
+                    header_row_idx = row_idx + 1
+                    col_date, col_desc, col_in, col_out, col_amount, col_type, col_partner, col_ref = m_date, m_desc, m_in, m_out, m_amt, m_type, m_partner, m_ref
+                    break
 
         if header_row_idx is None:
             header_row_idx = 0
@@ -576,6 +592,14 @@ class BankStatementParser:
                 header_idx = idx
                 col_date, col_desc, col_in, col_out, col_amount, col_type, col_partner, col_ref = c_date, c_desc, c_in, c_out, c_amt, c_type, c_partner, c_ref
                 break
+            elif idx < len(rows) - 1:
+                next_row = rows[idx + 1]
+                merged_row = [f"{v1} {v2}".strip() for v1, v2 in zip(row, next_row)]
+                m_date, m_desc, m_in, m_out, m_amt, m_type, m_partner, m_ref = cls._detect_statement_columns(merged_row)
+                if m_date is not None and (m_in is not None or m_out is not None or m_amt is not None):
+                    header_idx = idx + 1
+                    col_date, col_desc, col_in, col_out, col_amount, col_type, col_partner, col_ref = m_date, m_desc, m_in, m_out, m_amt, m_type, m_partner, m_ref
+                    break
 
         if header_idx is None:
             header_idx = 0
