@@ -1,13 +1,7 @@
 {
   "functions": {
     "api/**/*.py": {
-      "includeFiles": [
-        "data/**",
-        "pypdf/**",
-        "xlrd/**",
-        "openpyxl/**",
-        "et_xmlfile/**"
-      ]
+      "includeFiles": "{data/**,pypdf/**,xlrd/**,openpyxl/**,et_xmlfile/**}"
     }
   }
 }
