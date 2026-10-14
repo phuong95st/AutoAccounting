@@ -120,14 +120,16 @@ class BankStatementParser:
         # Thu thập các ứng viên mật khẩu
         passwords_to_try = []
         if password and password.strip():
+            # Nếu người dùng chủ động truyền mật khẩu riêng (trong Caption), ưu tiên thử mật khẩu này
             passwords_to_try.append(password.strip())
+        else:
+            # Nếu không truyền mật khẩu riêng trong caption, tự động dùng mật khẩu đã lưu hoặc cấu hình
+            saved_pass = rules_mgr.get_statement_password()
+            if saved_pass and saved_pass not in passwords_to_try:
+                passwords_to_try.append(saved_pass)
 
-        saved_pass = rules_mgr.get_statement_password()
-        if saved_pass and saved_pass not in passwords_to_try:
-            passwords_to_try.append(saved_pass)
-
-        if config.BANK_STATEMENT_PASSWORD and config.BANK_STATEMENT_PASSWORD not in passwords_to_try:
-            passwords_to_try.append(config.BANK_STATEMENT_PASSWORD)
+            if config.BANK_STATEMENT_PASSWORD and config.BANK_STATEMENT_PASSWORD not in passwords_to_try:
+                passwords_to_try.append(config.BANK_STATEMENT_PASSWORD)
 
         # Luôn thử cả trường hợp không cần mật khẩu
         passwords_to_try.append(None)
