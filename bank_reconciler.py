@@ -42,6 +42,7 @@ except Exception as e:
     pyzipper = None
     PYZIPPER_ERROR = f"{type(e).__name__}: {e}"
 
+import pure_zip_aes
 import config
 import database
 from ai_parser import GeminiParser, RuleEngine, rules_mgr, remove_accents
@@ -190,32 +191,45 @@ class BankStatementParser:
                         is_encrypted = True
                     attempt_logs.append(f"pyzipper[{pwd_disp}]: {err_msg}")
 
-            # 2. Thử giải nén bằng zipfile tiêu chuẩn
-            try:
-                with zipfile.ZipFile(zip_path, 'r') as zf:
-                    if pwd_bytes:
-                        zf.setpassword(pwd_bytes)
-                    zf.extractall(extract_dir, pwd=pwd_bytes)
-                    decrypt_success = True
-                    attempt_logs.append(f"zipfile[{pwd_disp}]: SUCCESS")
-                    break
-            except Exception as e:
-                err_msg = f"{type(e).__name__}: {e}"
-                err_lower = err_msg.lower()
-                if "not supported" in err_lower:
-                    is_aes256 = True
-                if any(k in err_lower for k in ["password", "encrypted", "bad password", "crc"]):
-                    is_encrypted = True
-                attempt_logs.append(f"zipfile[{pwd_disp}]: {err_msg}")
+            # 2. Thử giải nén bằng pure_zip_aes nếu là file WinZip AES (hoặc pyzipper không khả dụng)
+            if not decrypt_success and is_aes256:
+                try:
+                    p_files, p_err = pure_zip_aes.extract_winzip_aes(zip_path, extract_dir, password=str(pwd or ""))
+                    if p_err is None and p_files:
+                        decrypt_success = True
+                        attempt_logs.append(f"pure_zip_aes[{pwd_disp}]: SUCCESS")
+                        break
+                    else:
+                        if p_err == "BAD_PASSWORD":
+                            is_encrypted = True
+                        attempt_logs.append(f"pure_zip_aes[{pwd_disp}]: {p_err}")
+                except Exception as e:
+                    attempt_logs.append(f"pure_zip_aes[{pwd_disp}]: {type(e).__name__}({e})")
+
+            # 3. Thử giải nén bằng zipfile tiêu chuẩn (cho file không mã hóa hoặc ZipCrypto cổ điển)
+            if not decrypt_success and not is_aes256:
+                try:
+                    with zipfile.ZipFile(zip_path, 'r') as zf:
+                        if pwd_bytes:
+                            zf.setpassword(pwd_bytes)
+                        zf.extractall(extract_dir, pwd=pwd_bytes)
+                        decrypt_success = True
+                        attempt_logs.append(f"zipfile[{pwd_disp}]: SUCCESS")
+                        break
+                except Exception as e:
+                    err_msg = f"{type(e).__name__}: {e}"
+                    err_lower = err_msg.lower()
+                    if "not supported" in err_lower:
+                        is_aes256 = True
+                    if any(k in err_lower for k in ["password", "encrypted", "bad password", "crc"]):
+                        is_encrypted = True
+                    attempt_logs.append(f"zipfile[{pwd_disp}]: {err_msg}")
 
         debug_summary = " | ".join(attempt_logs)
 
         if not decrypt_success:
             shutil.rmtree(extract_dir, ignore_errors=True)
             has_passwords_tried = any(bool(p and p.strip()) for p in passwords_to_try)
-
-            if is_aes256 and not pyzipper:
-                return [], "AES256_ENGINE_MISSING", f"Engine pyzipper chưa nạp ({PYZIPPER_ERROR or 'Chưa cài đặt'}). Zip mã hóa AES-256 không thể mở bằng zipfile tiêu chuẩn. Log: {debug_summary}"
 
             if is_encrypted:
                 err_code = "BAD_PASSWORD" if has_passwords_tried else "PASSWORD_REQUIRED"

@@ -65,17 +65,18 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show current user's Telegram ID and system status."""
     user = update.effective_user
     chat = update.effective_chat
-    from bank_reconciler import PYZIPPER_LOADED, PYZIPPER_ERROR
+    from bank_reconciler import PYZIPPER_LOADED
+    import pure_zip_aes
     saved_pwd = rules_mgr.get_statement_password()
     masked_pwd = saved_pwd[:2] + "*" * (len(saved_pwd) - 4) + saved_pwd[-2:] if len(saved_pwd) > 4 else ("(chưa cài)" if not saved_pwd else "••••")
-    pyz_status = "✅ Sẵn sàng (AES-256 OK)" if PYZIPPER_LOADED else f"❌ Chưa nạp ({PYZIPPER_ERROR})"
+    backend_info = "pyzipper" if PYZIPPER_LOADED else f"Pure-Python ({pure_zip_aes._FAST_AES_BACKEND})"
     msg = (
         f"🆔 *THÔNG TIN HỆ THỐNG & TÀI KHOẢN:*\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"• User ID của bạn: `{user.id}`\n"
         f"• Chat ID: `{chat.id}`\n"
         f"• Môi trường: `Python {sys.version.split()[0]} ({sys.platform})`\n"
-        f"• Giải mã AES-256 (pyzipper): {pyz_status}\n"
+        f"• Giải mã AES-256: ✅ Sẵn sàng (`{backend_info}`)\n"
         f"• Mật khẩu sao kê đã lưu: `{masked_pwd}`\n"
         f"• Google Sheets Webhook: {'✅ Đã gắn' if config.GOOGLE_SHEETS_WEBHOOK_URL else '❌ Chưa gắn'}\n"
         f"━━━━━━━━━━━━━━━━━━\n"
