@@ -6,11 +6,13 @@ import ssl
 import base64
 from typing import Dict, Any, Optional, Tuple, List
 from pathlib import Path
+import config
 from config import (
     GEMINI_API_KEY_PRIMARY,
     GEMINI_API_KEY_BACKUP,
     GEMINI_MODELS,
-    RULES_PATH
+    RULES_PATH,
+    BANK_STATEMENT_PASSWORD
 )
 
 ssl_ctx = ssl.create_default_context()
@@ -52,6 +54,15 @@ class RulesManager:
             "type": tx_type,
             "category": category
         })
+        self.save()
+
+    def get_statement_password(self) -> str:
+        """Get saved default password for bank statement zip files."""
+        return self.rules.get("statement_password", "").strip() or config.BANK_STATEMENT_PASSWORD
+
+    def set_statement_password(self, password: str):
+        """Save default password for bank statement zip files."""
+        self.rules["statement_password"] = password.strip()
         self.save()
 
     def get_learned_rules_text(self) -> str:
@@ -420,3 +431,61 @@ Chỉ trả về JSON thuần, không kèm markdown hay giải thích."""
             print(f"Voice recognition error: {e}")
 
         return None
+
+    @classmethod
+    def parse_pdf_statement(cls, pdf_bytes: bytes) -> List[Dict[str, Any]]:
+        """Parse multi-page bank statement PDF using Gemini Multimodal Document Understanding."""
+        b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+        learned_rules_text = rules_mgr.get_learned_rules_text()
+
+        prompt = f"""Bạn là chuyên gia phân tích sao kê ngân hàng tài chính chuyên nghiệp cho phòng khám nha khoa.
+Nhiệm vụ của bạn: Đọc toàn bộ các giao dịch tài khoản từ tệp sao kê PDF ngân hàng (Vietcombank, Techcombank, MBBank, BIDV, ACB, VPBank, TPBank...) được đính kèm.
+
+Yêu cầu bóc tách từng giao dịch:
+- "date": Ngày giao dịch chuẩn định dạng YYYY-MM-DD.
+- "type": "thu" (nếu là tiền vào / ghi có / credit / phát sinh tăng / nhận tiền) hoặc "chi" (nếu là tiền ra / ghi nợ / debit / phát sinh giảm / chuyển tiền đi).
+- "amount": Số tiền nguyên dương VND (ví dụ: 1500000, không có dấu phẩy hay chấm).
+- "category": Phân loại tự động theo phòng khám nha khoa:
+  + Nếu là "thu": thường là "Doanh thu Dịch vụ" hoặc "Thu khác"
+  + Nếu là "chi": "Chi phí Labo", "Vật tư & Thuốc men", "Chi phí Tâm linh & Sinh hoạt", "Chi phí Vận hành & Tiện ích", "Lương & Nhân sự", hoặc "Chi khác"
+- "description": Nội dung/diễn giải giao dịch đầy đủ, sạch sẽ.
+- "payment_method": "transfer"
+- "source": "bank_statement"
+
+QUY TẮC ĐÃ HỌC:
+{learned_rules_text}
+
+ĐỊNH DẠNG JSON TRẢ VỀ DUY NHẤT:
+Trả về một mảng JSON các đối tượng giao dịch, ví dụ:
+[
+  {{
+    "date": "2026-10-01",
+    "type": "thu",
+    "amount": 1500000,
+    "category": "Doanh thu Dịch vụ",
+    "description": "KH NGUYEN VAN A TRAM RANG",
+    "payment_method": "transfer",
+    "source": "bank_statement"
+  }}
+]
+Nếu không có giao dịch nào, trả về mảng rỗng [].
+Chỉ trả về JSON thuần, không kèm markdown giải thích."""
+
+        try:
+            ai_resp = cls._call_gemini_api(prompt, inline_b64=b64, mime_type="application/pdf")
+            if ai_resp:
+                clean_json = ai_resp.strip()
+                if clean_json.startswith("```json"):
+                    clean_json = clean_json[7:]
+                if clean_json.endswith("```"):
+                    clean_json = clean_json[:-3]
+                data = json.loads(clean_json.strip())
+                if isinstance(data, list):
+                    return data
+                elif isinstance(data, dict) and "transactions" in data:
+                    return data["transactions"]
+        except Exception as e:
+            print(f"Gemini PDF statement parse error: {e}")
+
+        return []
+

@@ -88,6 +88,7 @@ flowchart TD
 | **`/nam`** | `/nam`<br>`/nam 2026` | **Báo cáo tài chính cả năm:** Doanh thu, chi phí, lợi nhuận ròng cả năm + **Bảng kết quả từng tháng (T01 ➔ T12)**. |
 | **`/ds`** | `/ds` | Xem 10 giao dịch gần nhất vừa nhập kèm mã `#ID`. |
 | **`/xoa`** | `/xoa 12` | Xóa giao dịch nếu nhập nhầm (tự tìm kiếm và xóa trên tất cả các tab năm). |
+| **`/matkhau`** | `/matkhau 038095000000`<br>`/matkhau xoa` | Cài đặt mật khẩu mở file sao kê ZIP ngân hàng (CCCD, ngày sinh...) để tự động giải nén khi gửi file từ app di động. |
 | **`/sheet`** | `/sheet` | Lấy link mở trực tiếp file Google Sheets online trên iPhone hoặc máy tính. |
 | **`/excel`** | `/excel` | Tải file Excel Sổ Quỹ mới nhất về máy để lưu trữ hoặc nộp báo cáo thuế. |
 | **`/hoc`** | `/hoc tẩy trắng = thu: Doanh thu Dịch vụ` | Dạy từ khóa mới cho AI và Rule Engine. |
@@ -117,18 +118,24 @@ flowchart TD
   * `- 150k mua gang tay y te`
 
 ### 3. Nhập sao kê ngân hàng & Đối soát tự động:
-* Cuối tháng, xuất file sao kê Excel (`.xlsx`, `.xls`) hoặc `.csv` từ Internet Banking (Vietcombank, Techcombank, MBBank, ACB, VPBank, BIDV...).
-* Kéo thả file vào khung chat Telegram:
-  * Hệ thống tự động phân tích toàn bộ giao dịch.
-  * Tự động lọc ra những giao dịch **đã được nhập tay/nói trước đó** để bỏ qua.
-  * Chỉ lưu các giao dịch mới, xuất báo cáo đối soát chi tiết:
-    > 🎉 **ĐỐI SOÁT & NHẬP SAO KÊ THÀNH CÔNG!**  
-    > • Tổng số giao dịch trong file: **25**  
-    > • ✅ Giao dịch mới đã lưu: **24**  
-    > • 🛡️ **Giao dịch trùng lặp bỏ qua: 1**  
-    > 🔎 *Chi tiết:* `+500.000 ₫` ngày 13/10: Khớp với GD `#12` *(Thu chị Quỳnh tiền khám răng)*  
-    > • 🟢 Tổng tiền vào (Thu mới): **45.000.000 ₫**  
-    > • 🔴 Tổng tiền ra (Chi mới): **12.500.000 ₫**
+* **Hỗ trợ định dạng phong phú:**
+  * File bảng tính Excel (`.xlsx`, `.xls`) hoặc `.csv`.
+  * File văn bản sao kê ngân hàng dạng **`.pdf`** (tự động phân tích cấu trúc cột hoặc dùng Gemini Multimodal Document AI).
+  * File nén **`.zip`** xuất từ app ngân hàng trên điện thoại (Vietcombank, Techcombank, MBBank, TPBank, VPBank...):
+    * 🔓 **Mở khóa bằng Caption:** Gõ mật khẩu vào ô chú thích khi gửi file (Ví dụ: `038095000000`).
+    * ⚙️ **Lưu mật khẩu tự động:** Dùng lệnh `/matkhau <mật khẩu>` 1 lần duy nhất, các lần gửi file ZIP sau bot tự giải nén không cần nhập lại!
+* **Deduplication Engine (Chống trùng lặp tuyệt đối):**
+  * Kéo thả file sao kê vào khung chat Telegram:
+    * Hệ thống tự động phân tích toàn bộ giao dịch.
+    * Tự động lọc ra những giao dịch **đã được nhập tay/nói trước đó** để bỏ qua.
+    * Chỉ lưu các giao dịch mới, xuất báo cáo đối soát chi tiết:
+      > 🎉 **ĐỐI SOÁT & NHẬP SAO KÊ THÀNH CÔNG!**  
+      > • Tổng số giao dịch trong file: **25**  
+      > • ✅ Giao dịch mới đã lưu: **24**  
+      > • 🛡️ **Giao dịch trùng lặp bỏ qua: 1**  
+      > 🔎 *Chi tiết:* `+500.000 ₫` ngày 13/10: Khớp với GD `#12` *(Thu chị Quỳnh tiền khám răng)*  
+      > • 🟢 Tổng tiền vào (Thu mới): **45.000.000 ₫**  
+      > • 🔴 Tổng tiền ra (Chi mới): **12.500.000 ₫**
 
 ---
 

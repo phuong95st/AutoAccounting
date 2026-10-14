@@ -1,22 +1,182 @@
-import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
+import re
+import csv
+import zipfile
+import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Tuple, Optional
+
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+
+try:
+    import xlrd
+except ImportError:
+    xlrd = None
+
+try:
+    import pypdf
+except ImportError:
+    pypdf = None
+
+try:
+    import pyzipper
+except ImportError:
+    pyzipper = None
+
+import config
 import database
-from ai_parser import GeminiParser, RuleEngine
-from config import REPORTS_DIR
+from ai_parser import GeminiParser, RuleEngine, rules_mgr, remove_accents
+from config import REPORTS_DIR, DATA_DIR
+
+def clean_statement_num(v: Any) -> int:
+    """Chuyển đổi số tiền trong sao kê sang số nguyên dương."""
+    if not v:
+        return 0
+    if isinstance(v, (int, float)):
+        return int(abs(v))
+    s = str(v).replace(',', '').replace('.', '').replace('VND', '').replace('đ', '').replace('+', '').strip()
+    try:
+        return int(abs(float(s)))
+    except Exception:
+        return 0
 
 class BankStatementParser:
-    """Intelligent parser for Vietnamese bank statements (VCB, TCB, MB, ACB, VPB, BIDV...)."""
+    """
+    Intelligent Multi-Format Parser for Vietnamese Bank Statements.
+    Hỗ trợ đọc sao kê tài khoản ngân hàng từ các định dạng:
+    1. .xlsx (Excel hiện đại - openpyxl)
+    2. .xls  (Excel 97-2003 - xlrd)
+    3. .pdf  (Tài liệu PDF - pypdf kết hợp Gemini Multimodal Document AI)
+    4. .csv  (Bảng dữ liệu phân tách dấu phẩy)
+    5. .zip  (Tệp nén có mật khẩu hoặc không có mật khẩu từ ứng dụng ngân hàng)
+    """
+
+    @classmethod
+    def parse_statement_file(cls, file_path: Path, password: Optional[str] = None) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """
+        Hàm điều phối phân tích tập tin sao kê dựa theo định dạng file.
+        Returns:
+            (transactions_list, error_code)
+            - error_code: None nếu thành công, hoặc 'PASSWORD_REQUIRED', 'BAD_PASSWORD', 'UNSUPPORTED_FORMAT', 'EMPTY_FILE'
+        """
+        ext = file_path.suffix.lower()
+
+        # 1. TỆP NÉN .ZIP
+        if ext == ".zip":
+            extracted_files, err = cls.extract_zip_archive(file_path, password)
+            if err:
+                return [], err
+
+            all_results = []
+            for sub_file in extracted_files:
+                sub_ext = sub_file.suffix.lower()
+                if sub_ext in [".xlsx", ".xls", ".pdf", ".csv"]:
+                    sub_items, _ = cls.parse_statement_file(sub_file, password)
+                    all_results.extend(sub_items)
+
+            # Dọn dẹp thư mục tạm
+            if extracted_files:
+                try:
+                    temp_parent = extracted_files[0].parent
+                    shutil.rmtree(temp_parent, ignore_errors=True)
+                except Exception:
+                    pass
+
+            return all_results, None
+
+        # 2. EXCEL HIỆN ĐẠI .XLSX
+        elif ext == ".xlsx":
+            return cls.parse_excel_statement(file_path), None
+
+        # 3. EXCEL CŨ .XLS
+        elif ext == ".xls":
+            return cls.parse_xls_statement(file_path), None
+
+        # 4. TÀI LIỆU .PDF
+        elif ext == ".pdf":
+            return cls.parse_pdf_statement(file_path), None
+
+        # 5. DỮ LIỆU .CSV
+        elif ext == ".csv":
+            return cls.parse_csv_statement(file_path), None
+
+        return [], "UNSUPPORTED_FORMAT"
+
+    @staticmethod
+    def extract_zip_archive(zip_path: Path, password: Optional[str] = None) -> Tuple[List[Path], Optional[str]]:
+        """
+        Giải nén tệp zip (hỗ trợ cả chuẩn ZipCrypto lẫn chuẩn AES-256 mã hóa của ngân hàng).
+        Tự động thử các mật khẩu:
+        1. Mật khẩu người dùng nhập trong Chú thích (Caption)
+        2. Mật khẩu đã lưu mặc định trong rules_mgr
+        3. Mật khẩu cấu hình trong .env (BANK_STATEMENT_PASSWORD)
+        4. Thử giải nén không mật khẩu
+        """
+        # Thu thập các ứng viên mật khẩu
+        passwords_to_try = []
+        if password and password.strip():
+            passwords_to_try.append(password.strip())
+
+        saved_pass = rules_mgr.get_statement_password()
+        if saved_pass and saved_pass not in passwords_to_try:
+            passwords_to_try.append(saved_pass)
+
+        if config.BANK_STATEMENT_PASSWORD and config.BANK_STATEMENT_PASSWORD not in passwords_to_try:
+            passwords_to_try.append(config.BANK_STATEMENT_PASSWORD)
+
+        # Luôn thử cả trường hợp không cần mật khẩu
+        passwords_to_try.append(None)
+
+        extract_dir = Path(tempfile.mkdtemp(prefix="bank_stmt_zip_"))
+        extracted_files = []
+
+        is_encrypted = False
+        decrypt_success = False
+
+        # Thử bằng pyzipper trước (hỗ trợ AES-256 mã hóa mạnh)
+        for pwd in passwords_to_try:
+            pwd_bytes = pwd.encode("utf-8") if pwd else None
+            try:
+                if pyzipper:
+                    with pyzipper.AESZipFile(zip_path, 'r') as zf:
+                        if pwd_bytes:
+                            zf.setpassword(pwd_bytes)
+                        zf.extractall(extract_dir)
+                        decrypt_success = True
+                        break
+                else:
+                    with zipfile.ZipFile(zip_path, 'r') as zf:
+                        zf.extractall(extract_dir, pwd=pwd_bytes)
+                        decrypt_success = True
+                        break
+            except (RuntimeError, zipfile.BadZipFile, Exception) as e:
+                err_str = str(e).lower()
+                if "password" in err_str or "encrypted" in err_str or "bad password" in err_str or "crc" in err_str:
+                    is_encrypted = True
+                continue
+
+        if not decrypt_success:
+            shutil.rmtree(extract_dir, ignore_errors=True)
+            if is_encrypted:
+                return [], "PASSWORD_REQUIRED" if not password else "BAD_PASSWORD"
+            return [], "CORRUPTED_ZIP"
+
+        # Quét tìm các file bảng tính / PDF bên trong
+        for p in extract_dir.rglob("*"):
+            if p.is_file() and p.suffix.lower() in [".xlsx", ".xls", ".pdf", ".csv"]:
+                extracted_files.append(p)
+
+        return extracted_files, None
 
     @staticmethod
     def parse_excel_statement(file_path: Path) -> List[Dict[str, Any]]:
+        """Phân tích sao kê ngân hàng định dạng .xlsx bằng openpyxl."""
         wb = openpyxl.load_workbook(file_path, data_only=True)
         sheet = wb.active
-        
-        # 1. Scan for header row
+
         header_row_idx = None
         col_date = None
         col_desc = None
@@ -25,29 +185,27 @@ class BankStatementParser:
         col_amount = None
 
         for row_idx in range(1, min(25, sheet.max_row + 1)):
-            row_vals = [str(sheet.cell(row=row_idx, column=c).value or '').lower().strip() for c in range(1, sheet.max_column + 1)]
-            # Check if this row looks like header
-            has_date = any(k in v for v in row_vals for k in ['ngày', 'date', 'thời gian'])
-            has_money = any(k in v for v in row_vals for k in ['tiền', 'amount', 'ghi có', 'ghi nợ', 'phát sinh', 'số dư'])
-            has_desc = any(k in v for v in row_vals for k in ['nội dung', 'diễn giải', 'mô tả', 'description', 'chi tiết'])
+            row_vals = [remove_accents(str(sheet.cell(row=row_idx, column=c).value or '')).lower().strip() for c in range(1, sheet.max_column + 1)]
+            has_date = any(k in v for v in row_vals for k in ['ngay', 'date', 'thoi gian'])
+            has_money = any(k in v for v in row_vals for k in ['tien', 'amount', 'ghi co', 'ghi no', 'phat sinh', 'so du', 'sotien'])
+            has_desc = any(k in v for v in row_vals for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung'])
 
             if (has_date and has_money) or (has_date and has_desc):
                 header_row_idx = row_idx
                 for col_idx, val in enumerate(row_vals, start=1):
-                    if any(k in val for k in ['ngày', 'date', 'thời gian']) and not col_date:
+                    if any(k in val for k in ['ngay', 'date', 'thoi gian']) and not col_date:
                         col_date = col_idx
-                    elif any(k in val for k in ['nội dung', 'diễn giải', 'mô tả', 'description', 'chi tiết']) and not col_desc:
+                    elif any(k in val for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung']) and not col_desc:
                         col_desc = col_idx
-                    elif any(k in val for k in ['ghi có', 'tiền vào', 'phát sinh tăng', 'credit', 'thu', 'nhận']):
+                    elif any(k in val for k in ['ghi co', 'tien vao', 'phat sinh tang', 'credit', 'thu', 'nhan']):
                         col_in = col_idx
-                    elif any(k in val for k in ['ghi nợ', 'tiền ra', 'phát sinh giảm', 'debit', 'chi', 'gửi']):
+                    elif any(k in val for k in ['ghi no', 'tien ra', 'phat sinh giam', 'debit', 'chi', 'gui']):
                         col_out = col_idx
-                    elif any(k in val for k in ['số tiền', 'amount', 'phát sinh']) and not col_amount:
+                    elif any(k in val for k in ['so tien', 'sotien', 'amount', 'phat sinh']) and not col_amount:
                         col_amount = col_idx
                 break
 
         if not header_row_idx:
-            # Fallback assumption if no header found
             header_row_idx = 1
             col_date = 1
             col_desc = 2
@@ -58,47 +216,32 @@ class BankStatementParser:
         for r in range(header_row_idx + 1, sheet.max_row + 1):
             date_val = sheet.cell(row=r, column=col_date).value if col_date else None
             desc_val = sheet.cell(row=r, column=col_desc).value if col_desc else ''
-            
+
             if not date_val and not desc_val:
                 continue
 
-            # Format date
             date_str = ""
             if isinstance(date_val, datetime):
                 date_str = date_val.strftime("%Y-%m-%d")
             elif date_val:
-                date_str = str(date_val).strip()
+                date_str = database.parse_vn_date(str(date_val).strip())
 
             desc_clean = str(desc_val or '').strip()
-
-            # Read amount
             amt_in = 0
             amt_out = 0
 
-            def clean_num(v):
-                if not v:
-                    return 0
-                if isinstance(v, (int, float)):
-                    return int(abs(v))
-                s = str(v).replace(',', '').replace('.', '').replace('VND', '').replace('đ', '').strip()
-                try:
-                    return int(abs(float(s)))
-                except:
-                    return 0
-
             if col_in and col_out:
-                amt_in = clean_num(sheet.cell(row=r, column=col_in).value)
-                amt_out = clean_num(sheet.cell(row=r, column=col_out).value)
+                amt_in = clean_statement_num(sheet.cell(row=r, column=col_in).value)
+                amt_out = clean_statement_num(sheet.cell(row=r, column=col_out).value)
             elif col_amount:
                 val = sheet.cell(row=r, column=col_amount).value
-                num = clean_num(val)
-                # Check if negative or positive
+                num = clean_statement_num(val)
                 try:
                     if float(str(val).replace(',', '')) < 0:
                         amt_out = num
                     else:
                         amt_in = num
-                except:
+                except Exception:
                     amt_in = num
 
             if amt_in == 0 and amt_out == 0:
@@ -107,7 +250,6 @@ class BankStatementParser:
             tx_type = "thu" if amt_in > 0 else "chi"
             amount = amt_in if amt_in > 0 else amt_out
 
-            # Classify category using rule engine or AI
             parsed = RuleEngine.parse(f"{'+' if tx_type == 'thu' else '-'} {amount} {desc_clean}")
             category = parsed["category"] if parsed else ("Doanh thu Dịch vụ" if tx_type == "thu" else "Chi khác")
 
@@ -120,6 +262,267 @@ class BankStatementParser:
                 "payment_method": "transfer",
                 "source": "bank_statement"
             })
+
+        return results
+
+    @staticmethod
+    def parse_xls_statement(file_path: Path) -> List[Dict[str, Any]]:
+        """Phân tích sao kê ngân hàng định dạng cũ .xls bằng xlrd."""
+        if not xlrd:
+            return []
+
+        try:
+            wb = xlrd.open_workbook(file_path)
+            sheet = wb.sheet_by_index(0)
+        except Exception as e:
+            print(f"Lỗi đọc file .xls: {e}")
+            return []
+
+        header_row_idx = None
+        col_date = None
+        col_desc = None
+        col_in = None
+        col_out = None
+        col_amount = None
+
+        for row_idx in range(min(25, sheet.nrows)):
+            row_vals = [remove_accents(str(sheet.cell_value(row_idx, c) or '')).lower().strip() for c in range(sheet.ncols)]
+            has_date = any(k in v for v in row_vals for k in ['ngay', 'date', 'thoi gian'])
+            has_money = any(k in v for v in row_vals for k in ['tien', 'amount', 'ghi co', 'ghi no', 'phat sinh', 'so du', 'sotien'])
+            has_desc = any(k in v for v in row_vals for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung'])
+
+            if (has_date and has_money) or (has_date and has_desc):
+                header_row_idx = row_idx
+                for col_idx, val in enumerate(row_vals):
+                    if any(k in val for k in ['ngay', 'date', 'thoi gian']) and col_date is None:
+                        col_date = col_idx
+                    elif any(k in val for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung']) and col_desc is None:
+                        col_desc = col_idx
+                    elif any(k in val for k in ['ghi co', 'tien vao', 'phat sinh tang', 'credit', 'thu', 'nhan']):
+                        col_in = col_idx
+                    elif any(k in val for k in ['ghi no', 'tien ra', 'phat sinh giam', 'debit', 'chi', 'gui']):
+                        col_out = col_idx
+                    elif any(k in val for k in ['so tien', 'sotien', 'amount', 'phat sinh']) and col_amount is None:
+                        col_amount = col_idx
+                break
+
+        if header_row_idx is None:
+            header_row_idx = 0
+            col_date = 0
+            col_desc = 1
+            col_in = 2
+            col_out = 3
+
+        results = []
+        for r in range(header_row_idx + 1, sheet.nrows):
+            date_val = sheet.cell_value(r, col_date) if col_date is not None else None
+            desc_val = sheet.cell_value(r, col_desc) if col_desc is not None else ''
+
+            if not date_val and not desc_val:
+                continue
+
+            date_str = ""
+            if sheet.cell_type(r, col_date) == xlrd.XL_CELL_DATE:
+                try:
+                    dt_tuple = xlrd.xldate_as_tuple(date_val, wb.datemode)
+                    date_str = f"{dt_tuple[0]:04d}-{dt_tuple[1]:02d}-{dt_tuple[2]:02d}"
+                except Exception:
+                    date_str = database.parse_vn_date(str(date_val))
+            elif date_val:
+                date_str = database.parse_vn_date(str(date_val).strip())
+
+            desc_clean = str(desc_val or '').strip()
+            amt_in = 0
+            amt_out = 0
+
+            if col_in is not None and col_out is not None:
+                amt_in = clean_statement_num(sheet.cell_value(r, col_in))
+                amt_out = clean_statement_num(sheet.cell_value(r, col_out))
+            elif col_amount is not None:
+                val = sheet.cell_value(r, col_amount)
+                num = clean_statement_num(val)
+                try:
+                    if float(str(val).replace(',', '')) < 0:
+                        amt_out = num
+                    else:
+                        amt_in = num
+                except Exception:
+                    amt_in = num
+
+            if amt_in == 0 and amt_out == 0:
+                continue
+
+            tx_type = "thu" if amt_in > 0 else "chi"
+            amount = amt_in if amt_in > 0 else amt_out
+
+            parsed = RuleEngine.parse(f"{'+' if tx_type == 'thu' else '-'} {amount} {desc_clean}")
+            category = parsed["category"] if parsed else ("Doanh thu Dịch vụ" if tx_type == "thu" else "Chi khác")
+
+            results.append({
+                "date": date_str,
+                "type": tx_type,
+                "amount": amount,
+                "category": category,
+                "description": desc_clean,
+                "payment_method": "transfer",
+                "source": "bank_statement"
+            })
+
+        return results
+
+    @staticmethod
+    def parse_csv_statement(file_path: Path) -> List[Dict[str, Any]]:
+        """Phân tích sao kê ngân hàng định dạng .csv."""
+        results = []
+        try:
+            with open(file_path, "r", encoding="utf-8-sig", errors="replace") as f:
+                reader = csv.reader(f)
+                rows = list(reader)
+        except Exception:
+            try:
+                with open(file_path, "r", encoding="cp1258", errors="replace") as f:
+                    reader = csv.reader(f)
+                    rows = list(reader)
+            except Exception as e:
+                print(f"Lỗi đọc file .csv: {e}")
+                return []
+
+        header_idx = None
+        col_date = None
+        col_desc = None
+        col_in = None
+        col_out = None
+        col_amount = None
+
+        for idx, row in enumerate(rows[:25]):
+            lowers = [remove_accents(c).lower().strip() for c in row]
+            has_date = any(k in v for v in lowers for k in ['ngay', 'date', 'thoi gian'])
+            has_money = any(k in v for v in lowers for k in ['tien', 'amount', 'ghi co', 'ghi no', 'phat sinh', 'so du', 'sotien'])
+            has_desc = any(k in v for v in lowers for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung'])
+            if (has_date and has_money) or (has_date and has_desc):
+                header_idx = idx
+                for c_idx, val in enumerate(lowers):
+                    if any(k in val for k in ['ngay', 'date', 'thoi gian']) and col_date is None:
+                        col_date = c_idx
+                    elif any(k in val for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung']) and col_desc is None:
+                        col_desc = c_idx
+                    elif any(k in val for k in ['ghi co', 'tien vao', 'phat sinh tang', 'credit', 'thu', 'nhan']):
+                        col_in = c_idx
+                    elif any(k in val for k in ['ghi no', 'tien ra', 'phat sinh giam', 'debit', 'chi', 'gui']):
+                        col_out = c_idx
+                    elif any(k in val for k in ['so tien', 'sotien', 'amount', 'phat sinh']) and col_amount is None:
+                        col_amount = c_idx
+                break
+
+        if header_idx is None:
+            header_idx = 0
+            col_date = 0
+            col_desc = 1
+            col_in = 2
+            col_out = 3
+
+        for row in rows[header_idx + 1:]:
+            if not row or len(row) <= max(col_date or 0, col_desc or 0):
+                continue
+
+            date_raw = row[col_date].strip() if col_date is not None and col_date < len(row) else ""
+            desc_clean = row[col_desc].strip() if col_desc is not None and col_desc < len(row) else ""
+            if not date_raw and not desc_clean:
+                continue
+
+            date_str = database.parse_vn_date(date_raw)
+            amt_in = clean_statement_num(row[col_in]) if col_in is not None and col_in < len(row) else 0
+            amt_out = clean_statement_num(row[col_out]) if col_out is not None and col_out < len(row) else 0
+
+            if amt_in == 0 and amt_out == 0 and col_amount is not None and col_amount < len(row):
+                val = row[col_amount]
+                num = clean_statement_num(val)
+                if '-' in val:
+                    amt_out = num
+                else:
+                    amt_in = num
+
+            if amt_in == 0 and amt_out == 0:
+                continue
+
+            tx_type = "thu" if amt_in > 0 else "chi"
+            amount = amt_in if amt_in > 0 else amt_out
+            parsed = RuleEngine.parse(f"{'+' if tx_type == 'thu' else '-'} {amount} {desc_clean}")
+            category = parsed["category"] if parsed else ("Doanh thu Dịch vụ" if tx_type == "thu" else "Chi khác")
+
+            results.append({
+                "date": date_str,
+                "type": tx_type,
+                "amount": amount,
+                "category": category,
+                "description": desc_clean,
+                "payment_method": "transfer",
+                "source": "bank_statement"
+            })
+
+        return results
+
+    @staticmethod
+    def parse_pdf_statement(file_path: Path) -> List[Dict[str, Any]]:
+        """
+        Phân tích sao kê ngân hàng định dạng PDF.
+        Bước 1: Trích xuất nhanh bằng pypdf cục bộ (nếu là PDF văn bản có cấu trúc).
+        Bước 2: Nếu PDF dạng bảng phức tạp hoặc scan ảnh, tự động kích hoạt Gemini Multimodal AI.
+        """
+        results = []
+
+        # 1. Thử bóc tách nhanh bằng pypdf
+        if pypdf:
+            try:
+                reader = pypdf.PdfReader(str(file_path))
+                full_text = ""
+                for page in reader.pages:
+                    full_text += (page.extract_text() or "") + "\n"
+
+                lines = full_text.splitlines()
+                # Pattern tìm dòng giao dịch: Ngày (dd/mm/yyyy) + Số tiền + Nội dung
+                date_pattern = r'(\d{1,2}[/-]\d{1,2}[/-]\d{4})'
+                for line in lines:
+                    line_str = line.strip()
+                    d_match = re.search(date_pattern, line_str)
+                    if d_match:
+                        date_str = database.parse_vn_date(d_match.group(1))
+                        # Tìm các chuỗi số tiền dạng 1.500.000 hoặc 500,000
+                        num_matches = re.findall(r'(\+|-)?\s*([1-9]\d{0,2}(?:[.,]\d{3})+)', line_str)
+                        if num_matches:
+                            sign, amt_str = num_matches[0]
+                            amt = clean_statement_num(amt_str)
+                            if amt > 0:
+                                is_thu = sign == "+" or "có" in line_str.lower() or "cr" in line_str.lower() or "nhận" in line_str.lower()
+                                tx_type = "thu" if is_thu else "chi"
+                                # Làm sạch diễn giải
+                                desc = re.sub(date_pattern, '', line_str)
+                                desc = re.sub(r'(\+|-)?\s*([1-9]\d{0,2}(?:[.,]\d{3})+)', '', desc)
+                                desc_clean = re.sub(r'\s+', ' ', desc).strip()
+
+                                parsed = RuleEngine.parse(f"{'+' if tx_type == 'thu' else '-'} {amt} {desc_clean}")
+                                category = parsed["category"] if parsed else ("Doanh thu Dịch vụ" if tx_type == "thu" else "Chi khác")
+
+                                results.append({
+                                    "date": date_str,
+                                    "type": tx_type,
+                                    "amount": amt,
+                                    "category": category,
+                                    "description": desc_clean,
+                                    "payment_method": "transfer",
+                                    "source": "bank_statement"
+                                })
+            except Exception as e:
+                print(f"Lỗi đọc PDF bằng pypdf: {e}")
+
+        # 2. Nếu pypdf không lấy được dòng nào (hoặc PDF dạng bảng phức tạp / scan)
+        # -> Chuyển giao ngay cho Gemini Multimodal Document AI
+        if not results:
+            try:
+                pdf_bytes = file_path.read_bytes()
+                results = GeminiParser.parse_pdf_statement(pdf_bytes)
+            except Exception as e:
+                print(f"Lỗi phân tích PDF bằng Gemini: {e}")
 
         return results
 
@@ -136,7 +539,6 @@ class ReportGenerator:
         ws_dash = wb.active
         ws_dash.title = "Tổng Quan"
 
-        # Styles
         font_title = Font(name="Arial", size=16, bold=True, color="1F497D")
         font_subtitle = Font(name="Arial", size=11, italic=True, color="595959")
         font_header = Font(name="Arial", size=11, bold=True, color="FFFFFF")
@@ -165,9 +567,6 @@ class ReportGenerator:
 
         num_format_currency = '#,##0 "₫"'
 
-        # ==========================================
-        # SHEET 1: DASHBOARD
-        # ==========================================
         ws_dash.merge_cells("A1:G1")
         ws_dash["A1"] = f"BÁO CÁO THU CHI PHÒNG KHÁM NHA KHOA"
         ws_dash["A1"].font = font_title
@@ -178,7 +577,6 @@ class ReportGenerator:
         ws_dash["A2"].font = font_subtitle
         ws_dash["A2"].alignment = align_center
 
-        # Section 1: KPI Summary Card
         headers_kpi = ["HẠNG MỤC", "TIỀN MẶT", "CHUYỂN KHOẢN", "TỔNG CỘNG"]
         for col_idx, h in enumerate(headers_kpi, start=2):
             cell = ws_dash.cell(row=4, column=col_idx, value=h)
@@ -204,7 +602,6 @@ class ReportGenerator:
                 cell.alignment = align_right
                 cell.border = border_thin
 
-        # Net Profit Row
         ws_dash.cell(row=7, column=2, value="LỢI NHUẬN RÒNG (Thu - Chi)").font = font_bold
         ws_dash.cell(row=7, column=2).fill = fill_highlight
         ws_dash.cell(row=7, column=2).border = border_thin
@@ -221,96 +618,15 @@ class ReportGenerator:
             cell.alignment = align_right
             cell.border = border_thin
 
-        # Section 2: Detailed Category Breakdown
-        # Chi phí
-        ws_dash.cell(row=9, column=2, value="CHI TIẾT CHI PHÍ THEO DANH MỤC").font = font_header
-        ws_dash.cell(row=9, column=2).fill = fill_header_orange
-        ws_dash.merge_cells("B9:E9")
-        ws_dash.cell(row=9, column=2).alignment = align_left
-
-        headers_cat = ["Danh mục chi", "Số giao dịch", "Số tiền", "Tỷ trọng %"]
-        for c_idx, h in enumerate(headers_cat, start=2):
-            cell = ws_dash.cell(row=10, column=c_idx, value=h)
-            cell.font = font_bold
-            cell.fill = fill_subtotal
-            cell.alignment = align_center
-            cell.border = border_thin
-
-        curr_r = 11
-        tot_chi = summary["total_chi"] or 1
-        for cat in summary["categories_chi"]:
-            ws_dash.cell(row=curr_r, column=2, value=cat["category"]).font = font_regular
-            ws_dash.cell(row=curr_r, column=2).border = border_thin
-
-            ws_dash.cell(row=curr_r, column=3, value=cat["count"]).font = font_regular
-            ws_dash.cell(row=curr_r, column=3).alignment = align_center
-            ws_dash.cell(row=curr_r, column=3).border = border_thin
-
-            c_amt = ws_dash.cell(row=curr_r, column=4, value=cat["total"])
-            c_amt.font = font_regular
-            c_amt.number_format = num_format_currency
-            c_amt.alignment = align_right
-            c_amt.border = border_thin
-
-            c_pct = ws_dash.cell(row=curr_r, column=5, value=cat["total"] / tot_chi)
-            c_pct.font = font_regular
-            c_pct.number_format = '0.0%'
-            c_pct.alignment = align_right
-            c_pct.border = border_thin
-            curr_r += 1
-
-        # Doanh thu
-        curr_r += 1
-        ws_dash.cell(row=curr_r, column=2, value="CHI TIẾT DOANH THU").font = font_header
-        ws_dash.cell(row=curr_r, column=2).fill = fill_header_green
-        ws_dash.merge_cells(f"B{curr_r}:E{curr_r}")
-        ws_dash.cell(row=curr_r, column=2).alignment = align_left
-        curr_r += 1
-
-        headers_cat_thu = ["Danh mục thu", "Số giao dịch", "Số tiền", "Tỷ trọng %"]
-        for c_idx, h in enumerate(headers_cat_thu, start=2):
-            cell = ws_dash.cell(row=curr_r, column=c_idx, value=h)
-            cell.font = font_bold
-            cell.fill = fill_subtotal
-            cell.alignment = align_center
-            cell.border = border_thin
-        curr_r += 1
-
-        tot_thu = summary["total_thu"] or 1
-        for cat in summary["categories_thu"]:
-            ws_dash.cell(row=curr_r, column=2, value=cat["category"]).font = font_regular
-            ws_dash.cell(row=curr_r, column=2).border = border_thin
-
-            ws_dash.cell(row=curr_r, column=3, value=cat["count"]).font = font_regular
-            ws_dash.cell(row=curr_r, column=3).alignment = align_center
-            ws_dash.cell(row=curr_r, column=3).border = border_thin
-
-            c_amt = ws_dash.cell(row=curr_r, column=4, value=cat["total"])
-            c_amt.font = font_regular
-            c_amt.number_format = num_format_currency
-            c_amt.alignment = align_right
-            c_amt.border = border_thin
-
-            c_pct = ws_dash.cell(row=curr_r, column=5, value=cat["total"] / tot_thu)
-            c_pct.font = font_regular
-            c_pct.number_format = '0.0%'
-            c_pct.alignment = align_right
-            c_pct.border = border_thin
-            curr_r += 1
-
-        # Adjust column widths for Sheet 1
         ws_dash.column_dimensions["A"].width = 4
         ws_dash.column_dimensions["B"].width = 32
         ws_dash.column_dimensions["C"].width = 18
         ws_dash.column_dimensions["D"].width = 22
         ws_dash.column_dimensions["E"].width = 22
 
-        # ==========================================
-        # SHEET 2: SỔ THU CHI CHI TIẾT
-        # ==========================================
         ws_detail = wb.create_sheet(title="Sổ Thu Chi Chi Tiết")
         headers_detail = ["ID", "Ngày", "Giờ", "Loại", "Số Tiền", "Hình Thức", "Danh Mục", "Nội Dung", "Nguồn"]
-        
+
         for c_idx, h in enumerate(headers_detail, start=1):
             cell = ws_detail.cell(row=1, column=c_idx, value=h)
             cell.font = font_header
@@ -323,21 +639,20 @@ class ReportGenerator:
             t_type = "THU" if "thu" in raw_type else "CHI"
             raw_meth = str(tx.get("payment_method", "")).lower()
             p_method = "Chuyển khoản" if "khoản" in raw_meth or "transfer" in raw_meth else "Tiền mặt"
-            
+
             c_id = ws_detail.cell(row=r_idx, column=1, value=tx.get("id", r_idx - 1))
             c_date = ws_detail.cell(row=r_idx, column=2, value=tx.get("date", ""))
             c_time = ws_detail.cell(row=r_idx, column=3, value=tx.get("time", ""))
             c_type = ws_detail.cell(row=r_idx, column=4, value=t_type)
             try:
                 amt_val = int(tx.get("amount", 0))
-            except:
+            except Exception:
                 amt_val = 0
             c_amt = ws_detail.cell(row=r_idx, column=5, value=amt_val)
             c_meth = ws_detail.cell(row=r_idx, column=6, value=p_method)
             c_cat = ws_detail.cell(row=r_idx, column=7, value=tx.get("category", ""))
             c_desc = ws_detail.cell(row=r_idx, column=8, value=tx.get("description", ""))
             c_src = ws_detail.cell(row=r_idx, column=9, value=tx.get("source", "telegram"))
-
 
             c_id.alignment = align_center
             c_date.alignment = align_center
@@ -352,12 +667,10 @@ class ReportGenerator:
             for cell in [c_id, c_date, c_time, c_type, c_amt, c_meth, c_cat, c_desc, c_src]:
                 cell.border = border_thin
 
-        # Column widths for Sheet 2
         col_widths = [8, 14, 12, 10, 18, 16, 26, 35, 14]
         for idx, w in enumerate(col_widths, start=1):
             ws_detail.column_dimensions[get_column_letter(idx)].width = w
 
-        # Save file
         filename = f"BaoCao_ThuChi_NhaKhoa_{year:04d}_{month:02d}.xlsx"
         output_path = REPORTS_DIR / filename
         wb.save(output_path)

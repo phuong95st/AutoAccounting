@@ -34,14 +34,18 @@ ALLOWED_TELEGRAM_USERS = [
 ]
 
 
+# Optional default bank statement zip password
+BANK_STATEMENT_PASSWORD = os.getenv("BANK_STATEMENT_PASSWORD", "").strip()
+
 # Paths
-DATA_DIR = BASE_DIR / "data"
 # On Vercel serverless, root filesystem is read-only, only /tmp is writable
-REPORTS_DIR = Path("/tmp") if os.environ.get("VERCEL") else (BASE_DIR / "reports")
+IS_VERCEL = bool(os.environ.get("VERCEL"))
+DATA_DIR = Path("/tmp/data") if IS_VERCEL else (BASE_DIR / "data")
+REPORTS_DIR = Path("/tmp/reports") if IS_VERCEL else (BASE_DIR / "reports")
 RULES_PATH = DATA_DIR / "skills_and_rules.json"
 
 try:
-    DATA_DIR.mkdir(exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
 except Exception:
     pass
 

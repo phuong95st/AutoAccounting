@@ -104,12 +104,16 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `/xoa <id>` : Xóa giao dịch nếu nhập nhầm (Ví dụ: `/xoa 12`).\n\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "🛡️ *3. ĐỐI SOÁT SAO KÊ & CHỐNG TRÙNG LẶP:*\n\n"
-        "• Cuối tháng, bạn gửi file Excel (`.xlsx`, `.xls`) hoặc `.csv` sao kê ngân hàng vào bot.\n"
-        "• Hệ thống tích hợp **Deduplication Engine**: Tự động so khớp số tiền, ngày, phương thức chuyển khoản và từ khóa diễn giải để **bỏ qua các giao dịch đã nhập qua giọng nói/tin nhắn trước đó**, tuyệt đối không bị cộng dồn doanh thu 2 lần!\n\n"
+        "• Hệ thống hỗ trợ đa dạng định dạng sao kê ngân hàng: `.xlsx`, `.xls`, `.pdf`, `.csv` và cả file nén `.zip` có mật khẩu!\n"
+        "• 🔐 *Hỗ trợ giải nén file ZIP ngân hàng:*\n"
+        "  - Bạn có thể nhập mật khẩu vào ô Chú thích (Caption) khi gửi file.\n"
+        "  - Hoặc lưu mật khẩu 1 lần bằng lệnh `/matkhau <mật khẩu>` (ví dụ: `/matkhau 038095000000` hoặc ngày sinh).\n"
+        "• ⚡ **Deduplication Engine**: Tự động so khớp số tiền, ngày, phương thức chuyển khoản và từ khóa diễn giải để **bỏ qua các giao dịch đã nhập qua giọng nói/tin nhắn trước đó**, tuyệt đối không bị cộng dồn doanh thu 2 lần!\n\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "⚙️ *4. QUẢN TRỊ & TIỆN ÍCH:*\n\n"
         "• /sheet : Mở trực tiếp Sổ Quỹ Google Sheets online (mỗi năm 1 tab riêng).\n"
         "• /excel : Tải file Excel Sổ Quỹ mới nhất về máy.\n"
+        "• `/matkhau [mật khẩu]` : Cài đặt mật khẩu mặc định để tự động mở file sao kê ZIP ngân hàng.\n"
         "• `/hoc <từ khóa> = <thu/chi>: <danh mục>` : Dạy từ khóa mới cho AI.\n"
         "• /id : Xem Telegram User ID của bạn để cấu hình bảo mật."
     )
@@ -437,6 +441,55 @@ async def cmd_teach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Lỗi cú pháp: {e}")
 
+def extract_password_from_caption(caption: Optional[str]) -> Optional[str]:
+    """Trích xuất mật khẩu từ phần chú thích (caption) của tệp đính kèm."""
+    if not caption:
+        return None
+    c = caption.strip()
+    m = re.search(r'(?:pass|mk|mat\s*khau|mật\s*khẩu)\s*[:=]?\s*(\S+)', c, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    if re.match(r'^[a-zA-Z0-9@#\-_]{4,20}$', c):
+        return c
+    return None
+
+async def cmd_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Manage default password for bank statement zip files."""
+    args = context.args or []
+    if not args:
+        saved = rules_mgr.get_statement_password()
+        if saved:
+            masked = saved[:2] + "*" * (len(saved) - 4) + saved[-2:] if len(saved) > 4 else "••••"
+            await update.message.reply_text(
+                f"🔐 *MẬT KHẨU SAO KÊ ZIP ĐÃ LƯU:*\n\n"
+                f"• Mật khẩu hiện tại: `{masked}`\n\n"
+                f"👉 Để đổi mật khẩu mới: `/matkhau <mật khẩu mới>`\n"
+                f"👉 Để xóa mật khẩu đã lưu: `/matkhau xoa`",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        else:
+            await update.message.reply_text(
+                "ℹ️ *Chưa lưu mật khẩu mở file sao kê ZIP!*\n\n"
+                "Khi tải sao kê từ app ngân hàng (Vietcombank, Techcombank, MBBank...), file tải về thường là .ZIP có mật khẩu (thường là CCCD hoặc Ngày sinh).\n\n"
+                "👉 Bạn hãy gõ: `/matkhau <mật khẩu_của_bạn>` (Ví dụ: `/matkhau 0123456789`)\n"
+                "Hệ thống sẽ lưu lại để tự động giải nén mọi file ZIP bạn gửi sau này!",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        return
+
+    arg = args[0].strip()
+    if arg.lower() in ["xoa", "clear", "delete", "remove"]:
+        rules_mgr.set_statement_password("")
+        await update.message.reply_text("🗑️ Đã xóa mật khẩu sao kê ZIP đã lưu thành công.", parse_mode=ParseMode.MARKDOWN)
+    else:
+        rules_mgr.set_statement_password(arg)
+        await update.message.reply_text(
+            f"🔐 *ĐÃ LƯU MẬT KHẨU SAO KÊ THÀNH CÔNG!*\n\n"
+            f"• Mật khẩu giải nén: `{arg}`\n\n"
+            "Từ nay, mỗi khi bạn gửi file nén `.ZIP` sao kê từ ứng dụng ngân hàng vào bot, hệ thống sẽ tự động giải nén và nạp giao dịch mà bạn không cần phải giải nén thủ công trên điện thoại nữa!",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
 async def cmd_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send link to online Google Sheets."""
     url = config.GOOGLE_SHEETS_URL
@@ -644,29 +697,56 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Lỗi khi xử lý giọng nói: {e}")
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle bank statement files (.xlsx, .xls, .csv) with Smart Deduplication."""
+    """Handle bank statement files (.xlsx, .xls, .pdf, .csv, .zip) with Smart Deduplication & Password Unzipping."""
     user_id = update.effective_user.id
     if not is_user_allowed(user_id):
         return
 
     doc = update.message.document
     filename = (doc.file_name or "").lower()
+    caption = update.message.caption or ""
 
-    if not (filename.endswith(".xlsx") or filename.endswith(".xls") or filename.endswith(".csv")):
-        await update.message.reply_text("⚠️ Vui lòng gửi file sao kê dạng Excel (.xlsx, .xls) hoặc .csv từ ngân hàng.")
+    supported_exts = [".xlsx", ".xls", ".pdf", ".csv", ".zip"]
+    if not any(filename.endswith(ext) for ext in supported_exts):
+        await update.message.reply_text(
+            "⚠️ Vui lòng gửi file sao kê từ ngân hàng dạng: Excel (`.xlsx`, `.xls`), PDF (`.pdf`), `.csv` hoặc file nén `.zip`."
+        )
         return
 
-    await update.message.reply_text("📑 Đang phân tích và đối soát chống trùng lặp sao kê... Vui lòng đợi trong giây lát.")
+    await update.message.reply_text("📑 Đang phân tích sao kê & giải mã đối soát... Vui lòng đợi trong giây lát.")
 
     try:
         file = await doc.get_file()
         save_path = config.DATA_DIR / f"temp_statement_{doc.file_name}"
         await file.download_to_drive(save_path)
 
-        # Parse statement
-        items = BankStatementParser.parse_excel_statement(save_path)
+        # Trích xuất mật khẩu từ chú thích hoặc cấu hình đã lưu
+        candidate_pwd = extract_password_from_caption(caption)
+
+        # Phân tích file sao kê
+        items, err_code = BankStatementParser.parse_statement_file(save_path, password=candidate_pwd)
+
+        # Xóa file tạm
+        try:
+            if save_path.exists():
+                os.remove(save_path)
+        except Exception:
+            pass
+
+        if err_code in ["PASSWORD_REQUIRED", "BAD_PASSWORD"]:
+            await update.message.reply_text(
+                "🔒 *FILE ZIP ĐƯỢC BẢO VỆ BẰNG MẬT KHẨU!*\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "File sao kê nén từ ứng dụng ngân hàng có đặt mật khẩu bảo vệ.\n\n"
+                "👉 *Cách xử lý nhanh (chỉ cần làm 1 lần):*\n"
+                "1. Gõ lệnh: `/matkhau <mật khẩu_của_bạn>` (VD: Số CCCD hoặc Ngày sinh) để lưu sẵn. Lần sau gửi file ZIP bot sẽ tự động mở!\n"
+                "2. Hoặc gửi lại file ZIP và điền mật khẩu vào ô **Chú thích (Caption)**.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+
         if not items:
-            await update.message.reply_text("⚠️ Không tìm thấy dòng giao dịch hợp lệ nào trong file sao kê.")
+            await update.message.reply_text("⚠️ Không tìm thấy dòng giao dịch hợp lệ nào trong tệp sao kê.")
             return
 
         # Smart Deduplication against Google Sheets records
@@ -685,14 +765,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if unique_items:
             saved_count = database.add_batch_transactions(unique_items)
 
-        # Clean up temporary file
-        try:
-            os.remove(save_path)
-        except Exception:
-            pass
-
+        file_type_badge = filename.split('.')[-1].upper()
         msg_lines = [
             "🎉 *ĐỐI SOÁT & NHẬP SAO KÊ THÀNH CÔNG!*\n",
+            f"• Định dạng tệp: *{file_type_badge}*",
             f"• Tổng số giao dịch trong file: *{len(items)}*",
             f"• ✅ Giao dịch mới đã lưu: *{saved_count}*",
             f"• 🛡️ *Giao dịch trùng lặp bỏ qua: {len(duplicate_items)}*",
@@ -715,7 +791,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• 🟢 Tổng tiền vào (Thu mới): *{format_vnd(total_in)}*",
             f"• 🔴 Tổng tiền ra (Chi mới): *{format_vnd(total_out)}*",
             "━━━━━━━━━━━━━━━━━━",
-            "👉 Gõ /excel để tải ngay báo cáo tổng hợp mới nhất!"
+            "👉 Gõ /excel hoặc /sheet để xem sổ quỹ chi tiết!"
         ])
         await update.message.reply_text("\n".join(msg_lines), parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
@@ -733,6 +809,7 @@ async def post_init(application: Application):
         BotCommand("ds", "Xem 10 giao dịch gần nhất"),
         BotCommand("sheet", "Mở Google Sheets Sổ Quỹ trực tuyến"),
         BotCommand("excel", "Tải file Excel về máy"),
+        BotCommand("matkhau", "Lưu mật khẩu giải nén file ZIP"),
         BotCommand("xoa", "Xóa giao dịch nhập nhầm (/xoa <id>)"),
         BotCommand("hoc", "Dạy từ khóa mới cho AI"),
         BotCommand("help", "Xem cẩm nang hướng dẫn chi tiết"),
@@ -768,6 +845,8 @@ def main():
     app.add_handler(CommandHandler("xoa", cmd_delete))
     app.add_handler(CommandHandler("hoc", cmd_teach))
     app.add_handler(CommandHandler("rule", cmd_teach))
+    app.add_handler(CommandHandler("matkhau", cmd_password))
+    app.add_handler(CommandHandler("pass", cmd_password))
     app.add_handler(CommandHandler("id", cmd_id))
 
     # Messages

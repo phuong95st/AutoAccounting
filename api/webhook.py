@@ -85,6 +85,18 @@ def notify_sheets_error(chat_id: int):
     )
     send_telegram_message(chat_id, msg)
 
+def extract_password_from_caption(caption: str) -> str:
+    """Trích xuất mật khẩu từ phần chú thích (caption) của tệp đính kèm."""
+    if not caption:
+        return None
+    c = caption.strip()
+    m = re.search(r'(?:pass|mk|mat\s*khau|mật\s*khẩu)\s*[:=]?\s*(\S+)', c, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    if re.match(r'^[a-zA-Z0-9@#\-_]{4,20}$', c):
+        return c
+    return None
+
 def process_telegram_update(update: dict):
     """Process incoming Telegram update dictionary."""
     message = update.get("message")
@@ -172,11 +184,15 @@ def process_telegram_update(update: dict):
             "• `/xoa <id>` : Xóa giao dịch nếu nhập nhầm (Ví dụ: `/xoa 12`).\n\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "🛡️ *3. ĐỐI SOÁT SAO KÊ & CHỐNG TRÙNG LẶP:*\n\n"
-            "• Cuối tháng, bạn gửi file Excel (`.xlsx`, `.xls`) hoặc `.csv` sao kê ngân hàng vào bot.\n"
-            "• Hệ thống tích hợp **Deduplication Engine**: Tự động so khớp số tiền, ngày, phương thức chuyển khoản và từ khóa diễn giải để **bỏ qua các giao dịch đã nhập qua giọng nói/tin nhắn trước đó**, tuyệt đối không bị cộng dồn doanh thu 2 lần!\n\n"
+            "• Hệ thống hỗ trợ đa dạng định dạng sao kê ngân hàng: `.xlsx`, `.xls`, `.pdf`, `.csv` và cả file nén `.zip` có mật khẩu!\n"
+            "• 🔐 *Hỗ trợ giải nén file ZIP ngân hàng:*\n"
+            "  - Bạn có thể nhập mật khẩu vào ô Chú thích (Caption) khi gửi file.\n"
+            "  - Hoặc lưu mật khẩu 1 lần bằng lệnh `/matkhau <mật khẩu>` (ví dụ: `/matkhau 038095000000` hoặc ngày sinh).\n"
+            "• ⚡ **Deduplication Engine**: Tự động so khớp số tiền, ngày, phương thức chuyển khoản và từ khóa diễn giải để **bỏ qua các giao dịch đã nhập qua giọng nói/tin nhắn trước đó**, tuyệt đối không bị cộng dồn doanh thu 2 lần!\n\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "⚙️ *4. QUẢN TRỊ & TIỆN ÍCH:*\n\n"
             "• /sheet : Mở trực tiếp Sổ Quỹ Google Sheets online (mỗi năm 1 tab riêng).\n"
+            "• `/matkhau [mật khẩu]` : Cài đặt mật khẩu mặc định để tự động mở file sao kê ZIP ngân hàng.\n"
             "• `/hoc <từ khóa> = <thu/chi>: <danh mục>` : Dạy từ mới cho AI.\n"
             "• /id : Xem Telegram User ID của bạn để cấu hình bảo mật."
         )
@@ -453,16 +469,53 @@ def process_telegram_update(update: dict):
         else:
             send_telegram_message(chat_id, "⚠️ Cú pháp: `/hoc <từ khóa> = <thu/chi>: <danh mục>`")
 
+    elif text.startswith("/matkhau") or text.startswith("/pass"):
+        prefix_len = 5 if text.startswith("/pass") else 8
+        arg = text[prefix_len:].strip()
+        if not arg:
+            saved = rules_mgr.get_statement_password()
+            if saved:
+                masked = saved[:2] + "*" * (len(saved) - 4) + saved[-2:] if len(saved) > 4 else "••••"
+                send_telegram_message(
+                    chat_id,
+                    f"🔐 *MẬT KHẨU SAO KÊ ZIP ĐÃ LƯU:*\n\n"
+                    f"• Mật khẩu hiện tại: `{masked}`\n\n"
+                    f"👉 Để đổi mật khẩu mới: `/matkhau <mật khẩu mới>`\n"
+                    f"👉 Để xóa mật khẩu đã lưu: `/matkhau xoa`"
+                )
+            else:
+                send_telegram_message(
+                    chat_id,
+                    "ℹ️ *Chưa lưu mật khẩu mở file sao kê ZIP!*\n\n"
+                    "Khi tải sao kê từ app ngân hàng (Vietcombank, Techcombank, MBBank...), file tải về thường là .ZIP có mật khẩu (thường là CCCD hoặc Ngày sinh).\n\n"
+                    "👉 Bạn hãy gõ: `/matkhau <mật khẩu_của_bạn>` (Ví dụ: `/matkhau 0123456789`)\n"
+                    "Hệ thống sẽ lưu lại để tự động giải nén mọi file ZIP bạn gửi sau này!"
+                )
+        elif arg.lower() in ["xoa", "clear", "delete", "remove"]:
+            rules_mgr.set_statement_password("")
+            send_telegram_message(chat_id, "🗑️ Đã xóa mật khẩu sao kê ZIP đã lưu thành công.")
+        else:
+            rules_mgr.set_statement_password(arg)
+            send_telegram_message(
+                chat_id,
+                f"🔐 *ĐÃ LƯU MẬT KHẨU SAO KÊ THÀNH CÔNG!*\n\n"
+                f"• Mật khẩu giải nén: `{arg}`\n\n"
+                "Từ nay, mỗi khi bạn gửi file nén `.ZIP` sao kê từ ứng dụng ngân hàng vào bot, hệ thống sẽ tự động giải nén và nạp giao dịch mà bạn không cần phải giải nén thủ công trên điện thoại nữa!"
+            )
+
     # ==========================================
-    # 2. XỬ LÝ FILE SAO KÊ NGÂN HÀNG (DEDUPLICATION)
+    # 2. XỬ LÝ FILE SAO KÊ NGÂN HÀNG (MULTI-FORMAT & DEDUPLICATION)
     # ==========================================
     elif doc:
         filename = (doc.get("file_name") or "").lower()
-        if not (filename.endswith(".xlsx") or filename.endswith(".xls") or filename.endswith(".csv")):
-            send_telegram_message(chat_id, "⚠️ Vui lòng gửi file sao kê định dạng Excel (.xlsx, .xls) hoặc .csv từ ngân hàng.")
+        caption = message.get("caption") or ""
+        supported_exts = [".xlsx", ".xls", ".pdf", ".csv", ".zip"]
+
+        if not any(filename.endswith(ext) for ext in supported_exts):
+            send_telegram_message(chat_id, "⚠️ Vui lòng gửi file sao kê từ ngân hàng dạng: Excel (`.xlsx`, `.xls`), PDF (`.pdf`), `.csv` hoặc file nén `.zip`.")
             return
 
-        send_telegram_message(chat_id, "📑 Đang phân tích và đối soát chống trùng lặp sao kê... Vui lòng chờ vài giây.")
+        send_telegram_message(chat_id, "📑 Đang phân tích sao kê & giải mã đối soát... Vui lòng chờ vài giây.")
         file_id = doc.get("file_id")
         doc_bytes = download_telegram_file(file_id)
         if not doc_bytes:
@@ -474,9 +527,23 @@ def process_telegram_update(update: dict):
             with open(temp_path, "wb") as f:
                 f.write(doc_bytes)
 
-            items = BankStatementParser.parse_excel_statement(temp_path)
+            candidate_pwd = extract_password_from_caption(caption)
+            items, err_code = BankStatementParser.parse_statement_file(temp_path, password=candidate_pwd)
+
+            if err_code in ["PASSWORD_REQUIRED", "BAD_PASSWORD"]:
+                send_telegram_message(
+                    chat_id,
+                    "🔒 *FILE ZIP ĐƯỢC BẢO VỆ BẰNG MẬT KHẨU!*\n"
+                    "━━━━━━━━━━━━━━━━━━\n"
+                    "File sao kê nén từ ứng dụng ngân hàng có đặt mật khẩu bảo vệ.\n\n"
+                    "👉 *Cách xử lý nhanh (chỉ cần làm 1 lần):*\n"
+                    "1. Gõ lệnh: `/matkhau <mật khẩu_của_bạn>` (VD: Số CCCD hoặc Ngày sinh) để lưu sẵn. Lần sau gửi file ZIP bot sẽ tự động mở!\n"
+                    "2. Hoặc gửi lại file ZIP và điền mật khẩu vào ô **Chú thích (Caption)**."
+                )
+                return
+
             if not items:
-                send_telegram_message(chat_id, "⚠️ Không tìm thấy dòng giao dịch hợp lệ nào trong file sao kê.")
+                send_telegram_message(chat_id, "⚠️ Không tìm thấy dòng giao dịch hợp lệ nào trong tệp sao kê.")
                 return
 
             unique_items, duplicate_items = database.reconcile_and_deduplicate(items)
@@ -493,8 +560,10 @@ def process_telegram_update(update: dict):
             if unique_items:
                 saved_count = database.add_batch_transactions(unique_items)
 
+            file_type_badge = filename.split('.')[-1].upper()
             msg_lines = [
                 "🎉 *ĐỐI SOÁT & NHẬP SAO KÊ THÀNH CÔNG!*\n",
+                f"• Định dạng tệp: *{file_type_badge}*",
                 f"• Tổng số giao dịch trong file: *{len(items)}*",
                 f"• ✅ Giao dịch mới đã lưu: *{saved_count}*",
                 f"• 🛡️ *Giao dịch trùng lặp bỏ qua: {len(duplicate_items)}*",
