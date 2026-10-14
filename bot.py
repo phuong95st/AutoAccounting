@@ -65,11 +65,12 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show current user's Telegram ID and system status."""
     user = update.effective_user
     chat = update.effective_chat
-    from bank_reconciler import PYZIPPER_LOADED
+    from bank_reconciler import PYZIPPER_LOADED, PYPDF_LOADED, PYPDF_ERROR
     import pure_zip_aes
     saved_pwd = rules_mgr.get_statement_password()
     masked_pwd = saved_pwd[:2] + "*" * (len(saved_pwd) - 4) + saved_pwd[-2:] if len(saved_pwd) > 4 else ("(chưa cài)" if not saved_pwd else "••••")
     backend_info = "pyzipper" if PYZIPPER_LOADED else f"Pure-Python ({pure_zip_aes._FAST_AES_BACKEND})"
+    pdf_info = "✅ Sẵn sàng" if PYPDF_LOADED else f"❌ Chưa nạp ({PYPDF_ERROR})"
     msg = (
         f"🆔 *THÔNG TIN HỆ THỐNG & TÀI KHOẢN:*\n"
         f"━━━━━━━━━━━━━━━━━━\n"
@@ -77,6 +78,7 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Chat ID: `{chat.id}`\n"
         f"• Môi trường: `Python {sys.version.split()[0]} ({sys.platform})`\n"
         f"• Giải mã AES-256: ✅ Sẵn sàng (`{backend_info}`)\n"
+        f"• Trình đọc PDF (pypdf): {pdf_info}\n"
         f"• Mật khẩu sao kê đã lưu: `{masked_pwd}`\n"
         f"• Google Sheets Webhook: {'✅ Đã gắn' if config.GOOGLE_SHEETS_WEBHOOK_URL else '❌ Chưa gắn'}\n"
         f"━━━━━━━━━━━━━━━━━━\n"
@@ -787,7 +789,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if not items:
-            await update.message.reply_text("⚠️ Không tìm thấy dòng giao dịch hợp lệ nào trong tệp sao kê.")
+            await update.message.reply_text(
+                f"⚠️ *Không tìm thấy dòng giao dịch hợp lệ nào trong tệp sao kê!*\n\n🔍 *Chi tiết kỹ thuật:* `{diag}`",
+                parse_mode=ParseMode.MARKDOWN
+            )
             return
 
         # Smart Deduplication against Google Sheets records

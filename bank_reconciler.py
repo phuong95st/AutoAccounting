@@ -17,10 +17,14 @@ try:
 except ImportError:
     xlrd = None
 
+PYPDF_LOADED = False
+PYPDF_ERROR = None
 try:
     import pypdf
-except ImportError:
+    PYPDF_LOADED = True
+except Exception as e:
     pypdf = None
+    PYPDF_ERROR = f"{type(e).__name__}: {e}"
 
 PYZIPPER_LOADED = False
 PYZIPPER_ERROR = None
@@ -89,11 +93,13 @@ class BankStatementParser:
                 return [], err, debug_info
 
             all_results = []
+            sub_logs = []
             for sub_file in extracted_files:
                 sub_ext = sub_file.suffix.lower()
                 if sub_ext in [".xlsx", ".xls", ".pdf", ".csv"]:
-                    sub_items, sub_err, _ = cls.parse_statement_file(sub_file, password)
+                    sub_items, sub_err, s_diag = cls.parse_statement_file(sub_file, password)
                     all_results.extend(sub_items)
+                    sub_logs.append(f"{sub_file.name}: {len(sub_items)} items ({s_diag})")
 
             # Dọn dẹp thư mục tạm
             if extracted_files:
@@ -103,7 +109,8 @@ class BankStatementParser:
                 except Exception:
                     pass
 
-            return all_results, None, debug_info
+            full_diag = f"{debug_info} | sub: {' | '.join(sub_logs)}" if sub_logs else debug_info
+            return all_results, None, full_diag
 
         # 2. EXCEL HIỆN ĐẠI .XLSX
         elif ext == ".xlsx":
@@ -115,7 +122,8 @@ class BankStatementParser:
 
         # 4. TÀI LIỆU .PDF
         elif ext == ".pdf":
-            return cls.parse_pdf_statement(file_path), None, "pdf_parsed"
+            items, p_diag = cls.parse_pdf_statement(file_path)
+            return items, None, p_diag
 
         # 5. DỮ LIỆU .CSV
         elif ext == ".csv":
@@ -536,18 +544,24 @@ class BankStatementParser:
         return results
 
     @staticmethod
-    def parse_pdf_statement(file_path: Path) -> List[Dict[str, Any]]:
+    def parse_pdf_statement(file_path: Path) -> Tuple[List[Dict[str, Any]], str]:
         """
         Phân tích sao kê ngân hàng định dạng PDF.
         Bước 1: Trích xuất nhanh bằng pypdf cục bộ (nếu là PDF văn bản có cấu trúc).
         Bước 2: Nếu PDF dạng bảng phức tạp hoặc scan ảnh, tự động kích hoạt Gemini Multimodal AI.
         """
         results = []
+        diag_logs = []
+
+        if not PYPDF_LOADED:
+            diag_logs.append(f"pypdf_unloaded: {PYPDF_ERROR}")
 
         # 1. Thử bóc tách nâng cao bằng pypdf (phân tích bảng theo tọa độ cột & dòng)
         if pypdf:
             try:
                 reader = pypdf.PdfReader(str(file_path))
+                num_pages = len(reader.pages)
+                diag_logs.append(f"pypdf_pages: {num_pages}")
                 
                 # Cách 1: Phân tích tọa độ không gian (chính xác tuyệt đối cho sao kê bảng cột như Techcombank, VCB, MB, ACB...)
                 coord_results = []
@@ -606,7 +620,8 @@ class BankStatementParser:
                                 })
 
                 if coord_results:
-                    return coord_results
+                    diag_logs.append(f"coord_success: {len(coord_results)}")
+                    return coord_results, " | ".join(diag_logs)
 
                 # Cách 2: Regex fallback nếu không khớp layout tọa độ chuẩn
                 full_text = ""
@@ -643,8 +658,12 @@ class BankStatementParser:
                                     "payment_method": "transfer",
                                     "source": "bank_statement"
                                 })
+                if results:
+                    diag_logs.append(f"regex_success: {len(results)}")
+                    return results, " | ".join(diag_logs)
+
             except Exception as e:
-                print(f"Lỗi đọc PDF bằng pypdf: {e}")
+                diag_logs.append(f"pypdf_error: {type(e).__name__}({e})")
 
         # 3. Nếu pypdf không lấy được dòng nào (hoặc PDF dạng bảng phức tạp / scan)
         # -> Chuyển giao ngay cho Gemini Multimodal Document AI
@@ -652,10 +671,14 @@ class BankStatementParser:
             try:
                 pdf_bytes = file_path.read_bytes()
                 results = GeminiParser.parse_pdf_statement(pdf_bytes)
+                if results:
+                    diag_logs.append(f"gemini_success: {len(results)}")
+                else:
+                    diag_logs.append("gemini_empty")
             except Exception as e:
-                print(f"Lỗi phân tích PDF bằng Gemini: {e}")
+                diag_logs.append(f"gemini_error: {type(e).__name__}({e})")
 
-        return results
+        return results, " | ".join(diag_logs)
 
 
 class ReportGenerator:

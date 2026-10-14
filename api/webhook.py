@@ -203,11 +203,12 @@ def process_telegram_update(update: dict):
         send_telegram_message(chat_id, help_msg)
 
     elif text == "/id":
-        from bank_reconciler import PYZIPPER_LOADED
+        from bank_reconciler import PYZIPPER_LOADED, PYPDF_LOADED, PYPDF_ERROR
         import pure_zip_aes
         saved_pwd = rules_mgr.get_statement_password()
         masked_pwd = saved_pwd[:2] + "*" * (len(saved_pwd) - 4) + saved_pwd[-2:] if len(saved_pwd) > 4 else ("(chưa cài)" if not saved_pwd else "••••")
         backend_info = "pyzipper" if PYZIPPER_LOADED else f"Pure-Python ({pure_zip_aes._FAST_AES_BACKEND})"
+        pdf_info = "✅ Sẵn sàng" if PYPDF_LOADED else f"❌ Chưa nạp ({PYPDF_ERROR})"
         msg = (
             f"🆔 *THÔNG TIN HỆ THỐNG & TÀI KHOẢN:*\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -215,6 +216,7 @@ def process_telegram_update(update: dict):
             f"• Chat ID: `{chat_id}`\n"
             f"• Môi trường: `Python {sys.version.split()[0]} ({sys.platform})`\n"
             f"• Giải mã AES-256: ✅ Sẵn sàng (`{backend_info}`)\n"
+            f"• Trình đọc PDF (pypdf): {pdf_info}\n"
             f"• Mật khẩu sao kê đã lưu: `{masked_pwd}`\n"
             f"• Google Sheets Webhook: {'✅ Đã gắn' if config.GOOGLE_SHEETS_WEBHOOK_URL else '❌ Chưa gắn'}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -596,7 +598,10 @@ def process_telegram_update(update: dict):
                 return
 
             if not items:
-                send_telegram_message(chat_id, "⚠️ Không tìm thấy dòng giao dịch hợp lệ nào trong tệp sao kê.")
+                send_telegram_message(
+                    chat_id,
+                    f"⚠️ *Không tìm thấy dòng giao dịch hợp lệ nào trong tệp sao kê!*\n\n🔍 *Chi tiết kỹ thuật:* `{diag}`"
+                )
                 return
 
             unique_items, duplicate_items = database.reconcile_and_deduplicate(items)

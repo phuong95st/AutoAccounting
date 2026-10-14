@@ -1,7 +1,10 @@
 {
   "functions": {
     "api/**/*.py": {
-      "includeFiles": "data/**"
+      "includeFiles": [
+        "data/**",
+        "pypdf/**"
+      ]
     }
   }
 }
