@@ -203,10 +203,20 @@ def process_telegram_update(update: dict):
         send_telegram_message(chat_id, help_msg)
 
     elif text == "/id":
+        from bank_reconciler import PYZIPPER_LOADED, PYZIPPER_ERROR
+        saved_pwd = rules_mgr.get_statement_password()
+        masked_pwd = saved_pwd[:2] + "*" * (len(saved_pwd) - 4) + saved_pwd[-2:] if len(saved_pwd) > 4 else ("(chưa cài)" if not saved_pwd else "••••")
+        pyz_status = "✅ Sẵn sàng (AES-256 OK)" if PYZIPPER_LOADED else f"❌ Chưa nạp ({PYZIPPER_ERROR})"
         msg = (
-            f"🆔 *THÔNG TIN TÀI KHOẢN:*\n"
+            f"🆔 *THÔNG TIN HỆ THỐNG & TÀI KHOẢN:*\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
             f"• User ID của bạn: `{user_id}`\n"
-            f"• Chat ID: `{chat_id}`\n\n"
+            f"• Chat ID: `{chat_id}`\n"
+            f"• Môi trường: `Python {sys.version.split()[0]} ({sys.platform})`\n"
+            f"• Giải mã AES-256 (pyzipper): {pyz_status}\n"
+            f"• Mật khẩu sao kê đã lưu: `{masked_pwd}`\n"
+            f"• Google Sheets Webhook: {'✅ Đã gắn' if config.GOOGLE_SHEETS_WEBHOOK_URL else '❌ Chưa gắn'}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
             f"_(Nếu muốn bảo mật, dán ID `{user_id}` vào biến `ALLOWED_TELEGRAM_USERS` trong cài đặt Vercel)_"
         )
         send_telegram_message(chat_id, msg)
@@ -540,28 +550,47 @@ def process_telegram_update(update: dict):
                     return
 
             candidate_pwd = extract_password_from_caption(caption)
-            items, err_code = BankStatementParser.parse_statement_file(temp_path, password=candidate_pwd)
+            res = BankStatementParser.parse_statement_file(temp_path, password=candidate_pwd)
+            items = res[0]
+            err_code = res[1]
+            diag = res[2] if len(res) > 2 else ""
 
-            if err_code in ["PASSWORD_REQUIRED", "BAD_PASSWORD"]:
-                if err_code == "BAD_PASSWORD":
+            if err_code:
+                if err_code == "AES256_ENGINE_MISSING":
                     send_telegram_message(
                         chat_id,
-                        "🔒 *MẬT KHẨU GIẢI NÉN KHÔNG ĐÚNG!*\n"
-                        "━━━━━━━━━━━━━━━━━━\n"
-                        "Mật khẩu sao kê đã lưu hoặc mật khẩu trong chú thích không mở được file ZIP này.\n\n"
-                        "👉 *Cách xử lý:*\n"
-                        "• Cập nhật lại mật khẩu đúng: `/matkhau <mật khẩu_mới>` (VD: Số CCCD hoặc Ngày sinh)\n"
-                        "• Hoặc gửi lại file ZIP và điền mật khẩu vào ô **Chú thích (Caption)**."
+                        f"⚙️ *THIẾU ENGINE GIẢI MÃ AES-256!*\n"
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"File sao kê được ngân hàng bảo vệ bằng chuẩn mã hóa AES-256 (Method 99), "
+                        f"tuy nhiên module `pyzipper` chưa sẵn sàng trên máy chủ.\n\n"
+                        f"🔍 *Chi tiết:* `{diag}`"
+                    )
+                elif err_code == "BAD_PASSWORD":
+                    send_telegram_message(
+                        chat_id,
+                        f"🔒 *MẬT KHẨU GIẢI NÉN KHÔNG ĐÚNG!*\n"
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"Mật khẩu sao kê đã lưu hoặc mật khẩu trong chú thích không mở được file ZIP này.\n\n"
+                        f"👉 *Cách xử lý:*\n"
+                        f"• Cập nhật lại mật khẩu đúng: `/matkhau <mật khẩu_mới>` (VD: Số CCCD hoặc Ngày sinh)\n"
+                        f"• Hoặc gửi lại file ZIP và điền mật khẩu vào ô **Chú thích (Caption)**.\n\n"
+                        f"🔍 *Chi tiết chẩn đoán:* `{diag}`"
+                    )
+                elif err_code == "PASSWORD_REQUIRED":
+                    send_telegram_message(
+                        chat_id,
+                        f"🔒 *FILE ZIP ĐƯỢC BẢO VỆ BẰNG MẬT KHẨU!*\n"
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"File sao kê nén từ ứng dụng ngân hàng có đặt mật khẩu bảo vệ.\n\n"
+                        f"👉 *Cách xử lý nhanh (chỉ cần làm 1 lần):*\n"
+                        f"1. Gõ lệnh: `/matkhau <mật khẩu_của_bạn>` (VD: Số CCCD hoặc Ngày sinh) để lưu sẵn. Lần sau gửi file ZIP bot sẽ tự động mở!\n"
+                        f"2. Hoặc gửi lại file ZIP và điền mật khẩu vào ô **Chú thích (Caption)**.\n\n"
+                        f"🔍 *Chi tiết chẩn đoán:* `{diag}`"
                     )
                 else:
                     send_telegram_message(
                         chat_id,
-                        "🔒 *FILE ZIP ĐƯỢC BẢO VỆ BẰNG MẬT KHẨU!*\n"
-                        "━━━━━━━━━━━━━━━━━━\n"
-                        "File sao kê nén từ ứng dụng ngân hàng có đặt mật khẩu bảo vệ.\n\n"
-                        "👉 *Cách xử lý nhanh (chỉ cần làm 1 lần):*\n"
-                        "1. Gõ lệnh: `/matkhau <mật khẩu_của_bạn>` (VD: Số CCCD hoặc Ngày sinh) để lưu sẵn. Lần sau gửi file ZIP bot sẽ tự động mở!\n"
-                        "2. Hoặc gửi lại file ZIP và điền mật khẩu vào ô **Chú thích (Caption)**."
+                        f"❌ Không thể phân tích file sao kê (Mã lỗi: `{err_code}`).\n\n🔍 *Chi tiết:* `{diag}`"
                     )
                 return
 

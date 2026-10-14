@@ -22,10 +22,25 @@ try:
 except ImportError:
     pypdf = None
 
+PYZIPPER_LOADED = False
+PYZIPPER_ERROR = None
+
 try:
+    try:
+        import Cryptodome
+    except ImportError:
+        try:
+            import Crypto
+            import sys
+            sys.modules['Cryptodome'] = Crypto
+        except ImportError:
+            pass
+
     import pyzipper
-except ImportError:
+    PYZIPPER_LOADED = True
+except Exception as e:
     pyzipper = None
+    PYZIPPER_ERROR = f"{type(e).__name__}: {e}"
 
 import config
 import database
@@ -56,27 +71,27 @@ class BankStatementParser:
     """
 
     @classmethod
-    def parse_statement_file(cls, file_path: Union[str, Path], password: Optional[str] = None) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    def parse_statement_file(cls, file_path: Union[str, Path], password: Optional[str] = None) -> Tuple[List[Dict[str, Any]], Optional[str], str]:
         """
         Hàm điều phối phân tích tập tin sao kê dựa theo định dạng file.
         Returns:
-            (transactions_list, error_code)
-            - error_code: None nếu thành công, hoặc 'PASSWORD_REQUIRED', 'BAD_PASSWORD', 'UNSUPPORTED_FORMAT', 'EMPTY_FILE'
+            (transactions_list, error_code, debug_info)
+            - error_code: None nếu thành công, hoặc 'PASSWORD_REQUIRED', 'BAD_PASSWORD', 'AES256_ENGINE_MISSING', 'UNSUPPORTED_FORMAT', 'EMPTY_FILE'
         """
         file_path = Path(file_path)
         ext = file_path.suffix.lower()
 
         # 1. TỆP NÉN .ZIP
         if ext == ".zip":
-            extracted_files, err = cls.extract_zip_archive(file_path, password)
+            extracted_files, err, debug_info = cls.extract_zip_archive(file_path, password)
             if err:
-                return [], err
+                return [], err, debug_info
 
             all_results = []
             for sub_file in extracted_files:
                 sub_ext = sub_file.suffix.lower()
                 if sub_ext in [".xlsx", ".xls", ".pdf", ".csv"]:
-                    sub_items, _ = cls.parse_statement_file(sub_file, password)
+                    sub_items, sub_err, _ = cls.parse_statement_file(sub_file, password)
                     all_results.extend(sub_items)
 
             # Dọn dẹp thư mục tạm
@@ -87,43 +102,40 @@ class BankStatementParser:
                 except Exception:
                     pass
 
-            return all_results, None
+            return all_results, None, debug_info
 
         # 2. EXCEL HIỆN ĐẠI .XLSX
         elif ext == ".xlsx":
-            return cls.parse_excel_statement(file_path), None
+            return cls.parse_excel_statement(file_path), None, "xlsx_parsed"
 
         # 3. EXCEL CŨ .XLS
         elif ext == ".xls":
-            return cls.parse_xls_statement(file_path), None
+            return cls.parse_xls_statement(file_path), None, "xls_parsed"
 
         # 4. TÀI LIỆU .PDF
         elif ext == ".pdf":
-            return cls.parse_pdf_statement(file_path), None
+            return cls.parse_pdf_statement(file_path), None, "pdf_parsed"
 
         # 5. DỮ LIỆU .CSV
         elif ext == ".csv":
-            return cls.parse_csv_statement(file_path), None
+            return cls.parse_csv_statement(file_path), None, "csv_parsed"
 
-        return [], "UNSUPPORTED_FORMAT"
+        return [], "UNSUPPORTED_FORMAT", f"Định dạng {ext} không được hỗ trợ"
 
     @staticmethod
-    def extract_zip_archive(zip_path: Path, password: Optional[str] = None) -> Tuple[List[Path], Optional[str]]:
+    def extract_zip_archive(zip_path: Path, password: Optional[str] = None) -> Tuple[List[Path], Optional[str], str]:
         """
         Giải nén tệp zip (hỗ trợ cả chuẩn ZipCrypto lẫn chuẩn AES-256 mã hóa của ngân hàng).
-        Tự động thử các mật khẩu:
+        Tự động thử các mật khẩu theo thứ tự ưu tiên:
         1. Mật khẩu người dùng nhập trong Chú thích (Caption)
-        2. Mật khẩu đã lưu mặc định trong rules_mgr
+        2. Mật khẩu đã lưu mặc định trong rules_mgr / default_rules
         3. Mật khẩu cấu hình trong .env (BANK_STATEMENT_PASSWORD)
         4. Thử giải nén không mật khẩu
         """
-        # Thu thập các ứng viên mật khẩu
-        passwords_to_try = []
-        if password and password.strip():
-            # Người dùng chủ động truyền mật khẩu riêng (trong Caption hoặc tham số gọi)
-            passwords_to_try.append(password.strip())
+        passwords_to_try: List[Optional[str]] = []
+        if password and str(password).strip():
+            passwords_to_try.append(str(password).strip())
         else:
-            # Người dùng không truyền mật khẩu riêng -> Tự động lấy mật khẩu mặc định đã lưu
             saved_pass = rules_mgr.get_statement_password()
             if saved_pass and saved_pass.strip():
                 passwords_to_try.append(saved_pass.strip())
@@ -131,50 +143,92 @@ class BankStatementParser:
             if config.BANK_STATEMENT_PASSWORD and config.BANK_STATEMENT_PASSWORD.strip():
                 passwords_to_try.append(config.BANK_STATEMENT_PASSWORD.strip())
 
-        # Luôn thử cả trường hợp không cần mật khẩu
         passwords_to_try.append(None)
 
         extract_dir = Path(tempfile.mkdtemp(prefix="bank_stmt_zip_"))
         extracted_files = []
 
         is_encrypted = False
+        is_aes256 = False
         decrypt_success = False
+        attempt_logs = []
 
-        # Thử bằng pyzipper trước (hỗ trợ AES-256 mã hóa mạnh)
+        # Kiểm tra trước thông tin nén và cờ mã hóa từ header zip
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as check_zf:
+                for zinfo in check_zf.infolist():
+                    if zinfo.compress_type == 99 or (zinfo.flag_bits & 0x1):
+                        is_encrypted = True
+                    if zinfo.compress_type == 99:
+                        is_aes256 = True
+        except Exception as e:
+            attempt_logs.append(f"inspect_zip: {type(e).__name__}({e})")
+
         for pwd in passwords_to_try:
             pwd_bytes = pwd.encode("utf-8") if pwd else None
-            try:
-                if pyzipper:
+            pwd_disp = f"{pwd[:2]}***{pwd[-2:]}" if pwd and len(pwd) > 4 else ("(none)" if pwd is None else "***")
+
+            # 1. Thử giải nén bằng pyzipper nếu có (hỗ trợ đầy đủ AES-256 lẫn ZipCrypto)
+            if pyzipper:
+                try:
                     with pyzipper.AESZipFile(zip_path, 'r') as zf:
                         if pwd_bytes:
                             zf.setpassword(pwd_bytes)
-                        zf.extractall(extract_dir)
-                        decrypt_success = True
-                        break
-                else:
-                    with zipfile.ZipFile(zip_path, 'r') as zf:
+                        # Kiểm tra file bằng testzip
+                        corrupted = zf.testzip()
+                        if corrupted is not None:
+                            attempt_logs.append(f"pyzipper[{pwd_disp}]: corrupt '{corrupted}'")
+                            continue
                         zf.extractall(extract_dir, pwd=pwd_bytes)
                         decrypt_success = True
+                        attempt_logs.append(f"pyzipper[{pwd_disp}]: SUCCESS")
                         break
-            except (RuntimeError, zipfile.BadZipFile, Exception) as e:
-                err_str = str(e).lower()
-                if "password" in err_str or "encrypted" in err_str or "bad password" in err_str or "crc" in err_str:
+                except Exception as e:
+                    err_msg = f"{type(e).__name__}: {e}"
+                    err_lower = err_msg.lower()
+                    if any(k in err_lower for k in ["password", "encrypted", "bad password", "crc", "wz_aes"]):
+                        is_encrypted = True
+                    attempt_logs.append(f"pyzipper[{pwd_disp}]: {err_msg}")
+
+            # 2. Thử giải nén bằng zipfile tiêu chuẩn
+            try:
+                with zipfile.ZipFile(zip_path, 'r') as zf:
+                    if pwd_bytes:
+                        zf.setpassword(pwd_bytes)
+                    zf.extractall(extract_dir, pwd=pwd_bytes)
+                    decrypt_success = True
+                    attempt_logs.append(f"zipfile[{pwd_disp}]: SUCCESS")
+                    break
+            except Exception as e:
+                err_msg = f"{type(e).__name__}: {e}"
+                err_lower = err_msg.lower()
+                if "not supported" in err_lower:
+                    is_aes256 = True
+                if any(k in err_lower for k in ["password", "encrypted", "bad password", "crc"]):
                     is_encrypted = True
-                continue
+                attempt_logs.append(f"zipfile[{pwd_disp}]: {err_msg}")
+
+        debug_summary = " | ".join(attempt_logs)
 
         if not decrypt_success:
             shutil.rmtree(extract_dir, ignore_errors=True)
+            has_passwords_tried = any(bool(p and p.strip()) for p in passwords_to_try)
+
+            if is_aes256 and not pyzipper:
+                return [], "AES256_ENGINE_MISSING", f"Engine pyzipper chưa nạp ({PYZIPPER_ERROR or 'Chưa cài đặt'}). Zip mã hóa AES-256 không thể mở bằng zipfile tiêu chuẩn. Log: {debug_summary}"
+
             if is_encrypted:
-                has_passwords_tried = any(bool(p and p.strip()) for p in passwords_to_try)
-                return [], "BAD_PASSWORD" if has_passwords_tried else "PASSWORD_REQUIRED"
-            return [], "CORRUPTED_ZIP"
+                err_code = "BAD_PASSWORD" if has_passwords_tried else "PASSWORD_REQUIRED"
+                return [], err_code, f"Mật khẩu đã thử: {len([p for p in passwords_to_try if p])} ứng viên. Log: {debug_summary}"
+
+            return [], "CORRUPTED_ZIP", f"Không thể giải nén file zip. Log: {debug_summary}"
 
         # Quét tìm các file bảng tính / PDF bên trong
         for p in extract_dir.rglob("*"):
             if p.is_file() and p.suffix.lower() in [".xlsx", ".xls", ".pdf", ".csv"]:
                 extracted_files.append(p)
 
-        return extracted_files, None
+        return extracted_files, None, debug_summary
 
     @staticmethod
     def parse_excel_statement(file_path: Path) -> List[Dict[str, Any]]:

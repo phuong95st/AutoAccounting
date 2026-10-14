@@ -724,7 +724,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         candidate_pwd = extract_password_from_caption(caption)
 
         # Phân tích file sao kê
-        items, err_code = BankStatementParser.parse_statement_file(save_path, password=candidate_pwd)
+        res = BankStatementParser.parse_statement_file(save_path, password=candidate_pwd)
+        items = res[0]
+        err_code = res[1]
+        diag = res[2] if len(res) > 2 else ""
 
         # Xóa file tạm
         try:
@@ -733,16 +736,43 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        if err_code in ["PASSWORD_REQUIRED", "BAD_PASSWORD"]:
-            await update.message.reply_text(
-                "🔒 *FILE ZIP ĐƯỢC BẢO VỆ BẰNG MẬT KHẨU!*\n"
-                "━━━━━━━━━━━━━━━━━━\n"
-                "File sao kê nén từ ứng dụng ngân hàng có đặt mật khẩu bảo vệ.\n\n"
-                "👉 *Cách xử lý nhanh (chỉ cần làm 1 lần):*\n"
-                "1. Gõ lệnh: `/matkhau <mật khẩu_của_bạn>` (VD: Số CCCD hoặc Ngày sinh) để lưu sẵn. Lần sau gửi file ZIP bot sẽ tự động mở!\n"
-                "2. Hoặc gửi lại file ZIP và điền mật khẩu vào ô **Chú thích (Caption)**.",
-                parse_mode=ParseMode.MARKDOWN
-            )
+        if err_code:
+            if err_code == "AES256_ENGINE_MISSING":
+                await update.message.reply_text(
+                    f"⚙️ *THIẾU ENGINE GIẢI MÃ AES-256!*\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"File sao kê được ngân hàng bảo vệ bằng chuẩn mã hóa AES-256 (Method 99), "
+                    f"tuy nhiên module `pyzipper` chưa sẵn sàng trên máy chủ.\n\n"
+                    f"🔍 *Chi tiết:* `{diag}`",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            elif err_code == "BAD_PASSWORD":
+                await update.message.reply_text(
+                    f"🔒 *MẬT KHẨU GIẢI NÉN KHÔNG ĐÚNG!*\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"Mật khẩu sao kê đã lưu hoặc mật khẩu trong chú thích không mở được file ZIP này.\n\n"
+                    f"👉 *Cách xử lý:*\n"
+                    f"• Cập nhật lại mật khẩu đúng: `/matkhau <mật khẩu_mới>` (VD: Số CCCD hoặc Ngày sinh)\n"
+                    f"• Hoặc gửi lại file ZIP và điền mật khẩu vào ô **Chú thích (Caption)**.\n\n"
+                    f"🔍 *Chi tiết chẩn đoán:* `{diag}`",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            elif err_code == "PASSWORD_REQUIRED":
+                await update.message.reply_text(
+                    f"🔒 *FILE ZIP ĐƯỢC BẢO VỆ BẰNG MẬT KHẨU!*\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"File sao kê nén từ ứng dụng ngân hàng có đặt mật khẩu bảo vệ.\n\n"
+                    f"👉 *Cách xử lý nhanh (chỉ cần làm 1 lần):*\n"
+                    f"1. Gõ lệnh: `/matkhau <mật khẩu_của_bạn>` (VD: Số CCCD hoặc Ngày sinh) để lưu sẵn. Lần sau gửi file ZIP bot sẽ tự động mở!\n"
+                    f"2. Hoặc gửi lại file ZIP và điền mật khẩu vào ô **Chú thích (Caption)**.\n\n"
+                    f"🔍 *Chi tiết chẩn đoán:* `{diag}`",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            else:
+                await update.message.reply_text(
+                    f"❌ Không thể phân tích file sao kê (Mã lỗi: `{err_code}`).\n\n🔍 *Chi tiết:* `{diag}`",
+                    parse_mode=ParseMode.MARKDOWN
+                )
             return
 
         if not items:

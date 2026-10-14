@@ -91,10 +91,9 @@ class RulesManager:
 
     def get_statement_password(self) -> str:
         """Get saved default password for bank statement zip files with multi-tier fallback."""
-        # 1. Từ bộ nhớ đang nạp
-        pwd = self.rules.get("statement_password", "").strip()
-        if pwd:
-            return pwd
+        # 1. Từ bộ nhớ đang nạp (tôn trọng cả trường hợp người dùng chủ động xóa mật khẩu)
+        if "statement_password" in self.rules:
+            return str(self.rules["statement_password"]).strip()
 
         # 2. Từ biến môi trường (BANK_STATEMENT_PASSWORD trên Vercel hoặc file .env)
         if config.BANK_STATEMENT_PASSWORD:

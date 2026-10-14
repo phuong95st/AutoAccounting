@@ -6,3 +6,4 @@ xlrd>=2.0.1
 pypdf>=5.0.0
 pyzipper>=0.3.6
 pycryptodomex>=3.18.0
+pycryptodome>=3.18.0

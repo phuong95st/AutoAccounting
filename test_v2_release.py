@@ -422,13 +422,13 @@ class TestAutoAccountingV2Release(unittest.TestCase):
             extracted_files = []
             try:
                 # Test giải nén với mật khẩu đúng (tự lấy từ rules_mgr)
-                extracted_files, err = BankStatementParser.extract_zip_archive(zip_path, password=None)
+                extracted_files, err, *_ = BankStatementParser.extract_zip_archive(zip_path, password=None)
                 self.assertIsNone(err)
                 self.assertTrue(len(extracted_files) > 0)
                 self.assertTrue(any(f.name.endswith(".csv") for f in extracted_files))
 
                 # Test parse_statement_file trên file zip
-                txs, err = BankStatementParser.parse_statement_file(zip_path, password="testpass123")
+                txs, err, *_ = BankStatementParser.parse_statement_file(zip_path, password="testpass123")
                 self.assertIsNone(err)
                 self.assertEqual(len(txs), 1)
                 self.assertEqual(txs[0]["amount"], 1500000)
