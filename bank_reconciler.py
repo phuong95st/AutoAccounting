@@ -286,10 +286,10 @@ class BankStatementParser:
         return extracted_files, None, debug_summary
 
     @staticmethod
-    def _detect_statement_columns(headers: List[str]) -> Tuple[Optional[int], Optional[int], Optional[int], Optional[int], Optional[int], Optional[int]]:
+    def _detect_statement_columns(headers: List[str]) -> Tuple[Optional[int], Optional[int], Optional[int], Optional[int], Optional[int], Optional[int], Optional[int], Optional[int]]:
         """
         Nhận diện thông minh các chỉ số cột:
-        Returns: (col_date, col_desc, col_in, col_out, col_amount, col_type)
+        Returns: (col_date, col_desc, col_in, col_out, col_amount, col_type, col_partner, col_ref)
         """
         col_date = None
         col_desc = None
@@ -297,6 +297,8 @@ class BankStatementParser:
         col_out = None
         col_amount = None
         col_type = None
+        col_partner = None
+        col_ref = None
 
         for c_idx, raw_h in enumerate(headers):
             val = remove_accents(str(raw_h or '')).lower().strip()
@@ -304,18 +306,22 @@ class BankStatementParser:
                 continue
             if any(k in val for k in ['ngay', 'date', 'thoi gian', 'tgian', 'posting date', 'trans date']) and col_date is None:
                 col_date = c_idx
-            elif any(k in val for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung', 'ghi chu', 'remark', 'thong tin', 'memo', 'details']) and col_desc is None:
+            elif any(k in val for k in ['doi tac', 'remitter', 'beneficiary', 'nguoi gui', 'nguoi nhan', 'partner']) and col_partner is None:
+                col_partner = c_idx
+            elif any(k in val for k in ['so but toan', 'ma gd', 'so giao dich', 'so tham chieu', 'transaction no', 'trans no']) and col_ref is None:
+                col_ref = c_idx
+            elif any(k in val for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung', 'ghi chu', 'remark', 'thong tin', 'details']) and col_desc is None:
                 col_desc = c_idx
-            elif any(k in val for k in ['ghi co', 'tien vao', 'phat sinh tang', 'credit', 'co (+)', 'co(+)', 'phat sinh co']):
+            elif any(k in val for k in ['ghi co', 'tien vao', 'phat sinh tang', 'credit', 'co (+)', 'co(+)', 'phat sinh co', 'co tktt']):
                 col_in = c_idx
-            elif any(k in val for k in ['ghi no', 'tien ra', 'phat sinh giam', 'debit', 'no (-)', 'no(-)', 'phat sinh no']):
+            elif any(k in val for k in ['ghi no', 'tien ra', 'phat sinh giam', 'debit', 'no (-)', 'no(-)', 'phat sinh no', 'no tktt']):
                 col_out = c_idx
             elif any(k in val for k in ['loai gd', 'loai giao dich', 'cr/dr', 'd/c', 'type', 'loai', 'chieu gd']) and col_type is None:
                 col_type = c_idx
             elif any(k in val for k in ['so tien', 'sotien', 'amount', 'phat sinh', 'tong tien', 'so tien gd']) and col_amount is None:
                 col_amount = c_idx
 
-        return col_date, col_desc, col_in, col_out, col_amount, col_type
+        return col_date, col_desc, col_in, col_out, col_amount, col_type, col_partner, col_ref
 
     @classmethod
     def parse_excel_statement(cls, file_path: Path) -> List[Dict[str, Any]]:
@@ -324,18 +330,14 @@ class BankStatementParser:
         sheet = wb.active
 
         header_row_idx = None
-        col_date = col_desc = col_in = col_out = col_amount = col_type = None
+        col_date = col_desc = col_in = col_out = col_amount = col_type = col_partner = col_ref = None
 
-        for row_idx in range(1, min(25, sheet.max_row + 1)):
+        for row_idx in range(1, min(100, sheet.max_row + 1)):
             row_vals = [str(sheet.cell(row=row_idx, column=c).value or '') for c in range(1, sheet.max_column + 1)]
-            lowers = [remove_accents(v).lower().strip() for v in row_vals]
-            has_date = any(k in v for v in lowers for k in ['ngay', 'date', 'thoi gian'])
-            has_money = any(k in v for v in lowers for k in ['tien', 'amount', 'ghi co', 'ghi no', 'phat sinh', 'so du', 'sotien'])
-            has_desc = any(k in v for v in lowers for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung', 'ghi chu', 'remark'])
-
-            if (has_date and has_money) or (has_date and has_desc):
+            c_date, c_desc, c_in, c_out, c_amt, c_type, c_partner, c_ref = cls._detect_statement_columns(row_vals)
+            if c_date is not None and (c_in is not None or c_out is not None or c_amt is not None):
                 header_row_idx = row_idx
-                col_date, col_desc, col_in, col_out, col_amount, col_type = cls._detect_statement_columns(row_vals)
+                col_date, col_desc, col_in, col_out, col_amount, col_type, col_partner, col_ref = c_date, c_desc, c_in, c_out, c_amt, c_type, c_partner, c_ref
                 break
 
         if not header_row_idx:
@@ -351,7 +353,27 @@ class BankStatementParser:
                 continue
 
             date_str = database.parse_vn_date(date_val)
-            desc_clean = str(desc_val or '').strip()
+            if not re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+                continue
+
+            # Skip summary / total turnover rows
+            row_text = remove_accents(str(date_val or '') + " " + str(desc_val or '')).lower()
+            if any(k in row_text for k in ['cong doanh so', 'so du cuoi', 'so du dau', 'opening balance', 'closing balance', 'total turnover', 'subtotal', 'tong phat sinh']):
+                continue
+
+            desc_parts = []
+            if col_partner is not None:
+                p_val = str(sheet.cell(row=r, column=col_partner + 1).value or '').strip()
+                if p_val:
+                    desc_parts.append(p_val)
+            if desc_val:
+                desc_parts.append(str(desc_val).strip())
+            if col_ref is not None:
+                r_val = str(sheet.cell(row=r, column=col_ref + 1).value or '').strip()
+                if r_val:
+                    desc_parts.append(r_val)
+
+            desc_clean = " ".join(desc_parts).strip()
             amt_in = 0
             amt_out = 0
 
@@ -413,18 +435,14 @@ class BankStatementParser:
         sheet = wb.sheet_by_index(0)
 
         header_row_idx = None
-        col_date = col_desc = col_in = col_out = col_amount = col_type = None
+        col_date = col_desc = col_in = col_out = col_amount = col_type = col_partner = col_ref = None
 
-        for row_idx in range(min(25, sheet.nrows)):
+        for row_idx in range(min(100, sheet.nrows)):
             row_vals = [str(sheet.cell_value(row_idx, c) or '') for c in range(sheet.ncols)]
-            lowers = [remove_accents(v).lower().strip() for v in row_vals]
-            has_date = any(k in v for v in lowers for k in ['ngay', 'date', 'thoi gian'])
-            has_money = any(k in v for v in lowers for k in ['tien', 'amount', 'ghi co', 'ghi no', 'phat sinh', 'so du', 'sotien'])
-            has_desc = any(k in v for v in lowers for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung', 'ghi chu', 'remark'])
-
-            if (has_date and has_money) or (has_date and has_desc):
+            c_date, c_desc, c_in, c_out, c_amt, c_type, c_partner, c_ref = cls._detect_statement_columns(row_vals)
+            if c_date is not None and (c_in is not None or c_out is not None or c_amt is not None):
                 header_row_idx = row_idx
-                col_date, col_desc, col_in, col_out, col_amount, col_type = cls._detect_statement_columns(row_vals)
+                col_date, col_desc, col_in, col_out, col_amount, col_type, col_partner, col_ref = c_date, c_desc, c_in, c_out, c_amt, c_type, c_partner, c_ref
                 break
 
         if header_row_idx is None:
@@ -449,7 +467,27 @@ class BankStatementParser:
             elif date_val:
                 date_str = database.parse_vn_date(str(date_val).strip())
 
-            desc_clean = str(desc_val or '').strip()
+            if not re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+                continue
+
+            # Skip summary rows
+            row_text = remove_accents(str(date_val or '') + " " + str(desc_val or '')).lower()
+            if any(k in row_text for k in ['cong doanh so', 'so du cuoi', 'so du dau', 'opening balance', 'closing balance', 'total turnover', 'subtotal', 'tong phat sinh']):
+                continue
+
+            desc_parts = []
+            if col_partner is not None:
+                p_val = str(sheet.cell_value(r, col_partner) or '').strip()
+                if p_val:
+                    desc_parts.append(p_val)
+            if desc_val:
+                desc_parts.append(str(desc_val).strip())
+            if col_ref is not None:
+                r_val = str(sheet.cell_value(r, col_ref) or '').strip()
+                if r_val:
+                    desc_parts.append(r_val)
+
+            desc_clean = " ".join(desc_parts).strip()
             amt_in = 0
             amt_out = 0
 
@@ -530,16 +568,13 @@ class BankStatementParser:
         rows = list(reader)
 
         header_idx = None
-        col_date = col_desc = col_in = col_out = col_amount = col_type = None
+        col_date = col_desc = col_in = col_out = col_amount = col_type = col_partner = col_ref = None
 
-        for idx, row in enumerate(rows[:25]):
-            lowers = [remove_accents(c).lower().strip() for c in row]
-            has_date = any(k in v for v in lowers for k in ['ngay', 'date', 'thoi gian'])
-            has_money = any(k in v for v in lowers for k in ['tien', 'amount', 'ghi co', 'ghi no', 'phat sinh', 'so du', 'sotien'])
-            has_desc = any(k in v for v in lowers for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung', 'ghi chu', 'remark'])
-            if (has_date and has_money) or (has_date and has_desc):
+        for idx, row in enumerate(rows[:100]):
+            c_date, c_desc, c_in, c_out, c_amt, c_type, c_partner, c_ref = cls._detect_statement_columns(row)
+            if c_date is not None and (c_in is not None or c_out is not None or c_amt is not None):
                 header_idx = idx
-                col_date, col_desc, col_in, col_out, col_amount, col_type = cls._detect_statement_columns(row)
+                col_date, col_desc, col_in, col_out, col_amount, col_type, col_partner, col_ref = c_date, c_desc, c_in, c_out, c_amt, c_type, c_partner, c_ref
                 break
 
         if header_idx is None:
@@ -557,6 +592,27 @@ class BankStatementParser:
                 continue
 
             date_str = database.parse_vn_date(date_raw)
+            if not re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+                continue
+
+            # Skip summary rows
+            row_text = remove_accents(str(date_raw) + " " + str(desc_clean)).lower()
+            if any(k in row_text for k in ['cong doanh so', 'so du cuoi', 'so du dau', 'opening balance', 'closing balance', 'total turnover', 'subtotal', 'tong phat sinh']):
+                continue
+
+            desc_parts = []
+            if col_partner is not None and col_partner < len(row):
+                p_val = row[col_partner].strip()
+                if p_val:
+                    desc_parts.append(p_val)
+            if desc_clean:
+                desc_parts.append(desc_clean)
+            if col_ref is not None and col_ref < len(row):
+                r_val = row[col_ref].strip()
+                if r_val:
+                    desc_parts.append(r_val)
+
+            desc_clean = " ".join(desc_parts).strip()
             amt_in = 0
             amt_out = 0
 
