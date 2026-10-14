@@ -739,8 +739,28 @@ def download_online_excel() -> Optional[Path]:
         print(f"Không thể tải file trực tiếp từ Google Sheets: {e}")
         return None
 
+_gas_features_cache = None
+
+def get_gas_features() -> List[str]:
+    """Kiểm tra các tính năng được hỗ trợ bởi phiên bản Google Apps Script hiện tại."""
+    global _gas_features_cache
+    if _gas_features_cache is not None:
+        return _gas_features_cache
+    try:
+        res = _call_sheets_api(params={"action": "ping"})
+        if res and isinstance(res.get("features"), list):
+            _gas_features_cache = res["features"]
+        else:
+            _gas_features_cache = []
+    except Exception:
+        _gas_features_cache = []
+    return _gas_features_cache
+
 def save_setting(key: str, value: str) -> bool:
-    """Lưu cấu hình hệ thống (key-value) lên Google Sheets PropertiesService để bảo toàn vĩnh viễn trên serverless."""
+    """Lưu cấu hình hệ thống (key-value) lên Google Sheets PropertiesService nếu script hỗ trợ."""
+    if "settings" not in get_gas_features():
+        # Phiên bản Apps Script trên Google Sheets chưa được người dùng deploy bản mới, không gửi để tránh tạo dòng rác
+        return False
     try:
         res = _call_sheets_api(payload={"action": "set_setting", "key": key, "value": value})
         return bool(res and res.get("status") == "success")
@@ -749,7 +769,9 @@ def save_setting(key: str, value: str) -> bool:
         return False
 
 def get_setting(key: str) -> Optional[str]:
-    """Truy vấn cấu hình hệ thống (key-value) từ Google Sheets PropertiesService."""
+    """Truy vấn cấu hình hệ thống (key-value) từ Google Sheets PropertiesService nếu script hỗ trợ."""
+    if "settings" not in get_gas_features():
+        return None
     try:
         res = _call_sheets_api(params={"action": "get_setting", "key": key})
         if res and res.get("status") == "ok":
@@ -757,4 +779,5 @@ def get_setting(key: str) -> Optional[str]:
     except Exception as e:
         print(f"Lỗi khi đọc cấu hình từ Google Sheets: {e}")
     return None
+
 

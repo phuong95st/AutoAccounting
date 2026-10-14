@@ -70,12 +70,18 @@ function doPost(e) {
     // C. XỬ LÝ LỆNH THÊM GIAO DỊCH (ADD)
     // ----------------------------------------------------
     var items = [];
-    if (payload.action === "add" && payload.data) {
-      items = Array.isArray(payload.data) ? payload.data : [payload.data];
+    if (payload.action === "add") {
+      if (payload.data) {
+        items = Array.isArray(payload.data) ? payload.data : [payload.data];
+      } else {
+        items = [payload];
+      }
     } else if (Array.isArray(payload)) {
       items = payload;
-    } else {
+    } else if (!payload.action && (payload.amount !== undefined || payload.type !== undefined)) {
       items = [payload];
+    } else {
+      return jsonResponse({ status: "ignored", message: "Yêu cầu không phải lệnh thêm giao dịch hợp lệ" });
     }
 
     if (items.length === 0) {
@@ -105,13 +111,18 @@ function doPost(e) {
 
       for (var k = 0; k < yearItems.length; k++) {
         var item = yearItems[k];
+        var amount = Number(item.amount) || 0;
+        // Bỏ qua các mục không hợp lệ (số tiền = 0 và không có mô tả/danh mục)
+        if (amount <= 0 && !item.description && !item.category) {
+          continue;
+        }
+
         var isThu = (item.type || "").toLowerCase() === "thu";
         var typeText = isThu ? "THU" : "CHI";
         var methLower = (item.payment_method || "").toLowerCase();
         var methodText = (methLower.indexOf("khoản") >= 0 || methLower.indexOf("transfer") >= 0 || methLower.indexOf("ck") >= 0)
           ? "Chuyển khoản" : "Tiền mặt";
-        var amount = Number(item.amount) || 0;
-        var rowId = item.id || (startRow + k - 1);
+        var rowId = item.id || (startRow + rowsToAdd.length);
 
         if (!firstId) firstId = rowId;
 
@@ -175,7 +186,13 @@ function doGet(e) {
     if (action === "ping") {
       var sheets = getAllYearSheets(ss);
       var sheetNames = sheets.map(function(s) { return s.getName(); });
-      return jsonResponse({ status: "ok", message: "Google Sheets Multi-Year DB Online", sheets: sheetNames });
+      return jsonResponse({
+        status: "ok",
+        version: "2.1",
+        features: ["settings", "multi_year"],
+        message: "Google Sheets Multi-Year DB Online",
+        sheets: sheetNames
+      });
     }
 
     // ----------------------------------------------------
