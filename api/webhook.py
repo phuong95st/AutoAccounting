@@ -102,7 +102,16 @@ def process_telegram_update(update: dict):
 
     # Check permissions
     if config.ALLOWED_TELEGRAM_USERS and user_id not in config.ALLOWED_TELEGRAM_USERS:
-        send_telegram_message(chat_id, "⛔ Bạn chưa được cấp quyền sử dụng hệ thống kế toán này.")
+        if text == "/id":
+            msg = (
+                f"🆔 *THÔNG TIN TÀI KHOẢN:*\n"
+                f"• User ID của bạn: `{user_id}`\n"
+                f"• Chat ID: `{chat_id}`\n\n"
+                f"_(Bạn chưa được cấp quyền sử dụng hệ thống. Hãy gửi ID `{user_id}` cho quản trị viên để được thêm vào danh sách cấp phép)_"
+            )
+            send_telegram_message(chat_id, msg)
+            return
+        send_telegram_message(chat_id, f"⛔ Bạn chưa được cấp quyền sử dụng hệ thống kế toán này. Gõ /id để xem Telegram User ID của bạn.")
         return
 
     # ==========================================

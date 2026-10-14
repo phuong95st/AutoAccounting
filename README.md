@@ -1,6 +1,6 @@
-# 🦷 AutoAccounting v1.1 - Trợ Lý Quản Lý Thu Chi Phòng Khám Nha Khoa
+# 🦷 AutoAccounting v2.0 - Trợ Lý Quản Lý Thu Chi Phòng Khám Nha Khoa
 
-[![Release](https://img.shields.io/badge/Release-v1.1-brightgreen.svg)](https://github.com/phuong95st/AutoAccounting/releases)
+[![Release](https://img.shields.io/badge/Release-v2.0-brightgreen.svg)](https://github.com/phuong95st/AutoAccounting/releases)
 [![AI Engine](https://img.shields.io/badge/AI-Google%20Gemini%203.5%20Flash-blue.svg)](https://ai.google.dev/)
 [![Database](https://img.shields.io/badge/Database-Google%20Sheets%20Online-success.svg)](https://sheets.google.com/)
 [![Platform](https://img.shields.io/badge/Platform-Telegram%20%7C%20Vercel%20Serverless-orange.svg)](https://vercel.com/)
@@ -175,4 +175,4 @@ flowchart TD
 
 ## 📄 Bản Quyền & Giấy Phép
 Dự án được xây dựng phục vụ nhu cầu quản lý tài chính phòng khám nha khoa tự động, mã nguồn mở và miễn phí sử dụng.  
-Release Version: **v1.1** (Tháng 10/2026).
+Release Version: **v2.0** (Tháng 10/2026).

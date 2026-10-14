@@ -667,6 +667,11 @@ def reconcile_and_deduplicate(
 
             # Trường hợp 2: Giao dịch nhập tay/giọng nói trước đó
             else:
+                # Nếu giao dịch trước đó đã được ghi nhận rõ là Tiền mặt thì KHÔNG trùng với sao kê ngân hàng
+                is_cash = any(k in ex_meth for k in ["cash", "tiền mặt", "tien mat", "mat"]) and not any(k in ex_meth for k in ["transfer", "khoản", "ck", "bank"])
+                if is_cash:
+                    continue
+
                 # Nếu giao dịch trước đó đã được đánh dấu chuyển khoản
                 is_ck = any(k in ex_meth for k in ["transfer", "khoản", "ck", "bank"])
                 if is_ck:
