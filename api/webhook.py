@@ -3,6 +3,7 @@ import urllib.request
 import urllib.parse
 import ssl
 import sys
+import os
 import traceback
 from http.server import BaseHTTPRequestHandler
 from datetime import datetime
@@ -17,6 +18,7 @@ try:
     import config
     import database
     from ai_parser import GeminiParser, RuleEngine, rules_mgr
+    from bank_reconciler import BankStatementParser
 except Exception:
     STARTUP_ERROR = traceback.format_exc()
     print(f"FATAL STARTUP ERROR: {STARTUP_ERROR}")
@@ -62,7 +64,7 @@ def download_telegram_file(file_id: str):
                 return None
             down_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
             down_req = urllib.request.Request(down_url)
-            with urllib.request.urlopen(down_req, timeout=15, context=ssl_ctx) as down_resp:
+            with urllib.request.urlopen(down_req, timeout=20, context=ssl_ctx) as down_resp:
                 return down_resp.read()
     except Exception as e:
         print(f"Error downloading telegram file {file_id}: {e}")
@@ -96,6 +98,7 @@ def process_telegram_update(update: dict):
     text = (message.get("text") or "").strip()
     voice = message.get("voice") or message.get("audio")
     photo = message.get("photo")
+    doc = message.get("document")
 
     # Check permissions
     if config.ALLOWED_TELEGRAM_USERS and user_id not in config.ALLOWED_TELEGRAM_USERS:
@@ -103,25 +106,29 @@ def process_telegram_update(update: dict):
         return
 
     # ==========================================
-    # 1. CÁC LỆNH HỆ THỐNG
+    # 1. CÁC LỆNH HỆ THỐNG & TRUY VẤN TÀI CHÍNH
     # ==========================================
     if text == "/start" or text == "/help":
         welcome = (
             f"👋 *Xin chào {user.get('first_name', '')}! Tôi là Trợ Lý Kế Toán Phòng Khám Nha Khoa.*\n\n"
-            "💡 *CÁCH GHI THU CHI NHANH:*\n"
+            "💡 *CÁCH GHI THU CHI NHANH (3 GIÂY):*\n"
             "• `+ 500k khach tram rang` ➡️ Thu tiền mặt\n"
             "• `+ 2tr ck khach Trang boc rang su` ➡️ Khách chuyển khoản\n"
             "• `- 70k hoa qua thap huong` ➡️ Chi tiền mua hoa quả\n"
             "• `- 1.2tr ck labo rang su chi Nga` ➡️ Chi tiền làm labo\n"
-            "• 🎙 *Giọng nói:* Giữ nút Micro nói (VD: *'Thu 500k trám răng'*), AI tự nghe và ghi chép.\n"
+            "• 🎙 *Giọng nói:* Giữ nút Micro nói (VD: *'Thu chị Quỳnh 500k khám răng'*), AI tự nghe và ghi chép.\n"
             "• 📸 *Ảnh chụp:* Chụp hóa đơn/phiếu thu gửi vào đây để AI đọc tự động.\n\n"
-            "📌 *CÁC LỆNH QUẢN TRỊ TRÊN GOOGLE SHEETS:*\n"
-            "• /sheet : Mở trực tiếp Sổ Quỹ Google Sheets online\n"
-            "• /today : Xem nhanh tổng kết thu chi hôm nay\n"
-            "• /thang : Xem nhanh tổng kết doanh thu & chi phí tháng này\n"
+            "📌 *CÁC LỆNH BÁO CÁO & TRUY VẤN:*\n"
+            "• /today : Xem thu chi hôm nay\n"
+            "• `/ngay [dd/mm]` : Xem thu chi ngày chỉ định (VD: `/ngay 13/10`)\n"
+            "• `/khoang <từ> <đến>` : Xem thu chi theo khoảng (VD: `/khoang 01/10 14/10`)\n"
+            "• `/thang [mm/yyyy]` : Xem báo cáo tháng chỉ định (VD: `/thang 9` hoặc `/thang 10/2026`)\n"
+            "• `/nam [yyyy]` : Xem báo cáo tổng kết cả năm (VD: `/nam 2026`)\n"
             "• /ds : Xem 10 giao dịch vừa nhập gần nhất\n"
-            "• /xoa `<id>` : Xóa giao dịch nếu nhập nhầm (VD: `/xoa 5`)\n"
-            "• /hoc `<từ khóa> = <thu/chi>: <danh mục>` : Dạy từ mới cho AI\n\n"
+            "• `/xoa <id>` : Xóa giao dịch nếu nhập nhầm (VD: `/xoa 5`)\n"
+            "• /sheet : Mở trực tiếp Sổ Quỹ Google Sheets online (mỗi năm 1 tab riêng)\n"
+            "• `/hoc <từ khóa> = <thu/chi>: <danh mục>` : Dạy từ mới cho AI\n\n"
+            "🛡️ *ĐỐI SOÁT & CHỐNG TRÙNG LẶP:* Cuối tháng gửi file sao kê ngân hàng (.xlsx/.csv), hệ thống tự động nhận diện và bỏ qua các khoản đã nhập qua giọng nói/tin nhắn trước đó!\n\n"
             f"🆔 *Telegram ID của bạn:* `{user_id}`"
         )
         send_telegram_message(chat_id, welcome)
@@ -147,29 +154,142 @@ def process_telegram_update(update: dict):
         else:
             send_telegram_message(chat_id, "ℹ️ Chưa gắn GOOGLE_SHEETS_URL trong biến môi trường.")
 
-    elif text == "/today" or text == "/ngay":
-        s = database.get_today_summary()
-        date_str = datetime.now().strftime("%d/%m/%Y")
-        profit_symbol = "🟢" if s.get("balance", 0) >= 0 else "🔴"
-        msg = (
-            f"📊 *BÁO CÁO THU CHI HÔM NAY ({date_str})*\n\n"
-            f"🟢 *TỔNG THU:* `{format_vnd(s.get('total_thu', 0))}`\n"
-            f"  • Tiền mặt: `{format_vnd(s.get('thu_cash', 0))}`\n"
-            f"  • Chuyển khoản: `{format_vnd(s.get('thu_transfer', 0))}`\n\n"
-            f"🔴 *TỔNG CHI:* `{format_vnd(s.get('total_chi', 0))}`\n"
-            f"  • Tiền mặt: `{format_vnd(s.get('chi_cash', 0))}`\n"
-            f"  • Chuyển khoản: `{format_vnd(s.get('chi_transfer', 0))}`\n\n"
-            f"{profit_symbol} *CHÊNH LỆCH TRONG NGÀY:* `{format_vnd(s.get('balance', 0))}`\n"
-            f"📝 Tổng số giao dịch: {s.get('count', 0)}"
-        )
-        send_telegram_message(chat_id, msg)
+    elif text == "/today" or text.startswith("/ngay"):
+        arg = text[5:].strip() if text.startswith("/ngay") else ""
+        target_date = None
+        if arg:
+            target_date = database.parse_user_date(arg)
+            if not target_date:
+                send_telegram_message(
+                    chat_id,
+                    "⚠️ *Định dạng ngày chưa đúng!*\n\n"
+                    "Bạn có thể nhập:\n"
+                    "• `/ngay` : Xem hôm nay\n"
+                    "• `/ngay 13/10` : Xem ngày 13 tháng 10 năm nay\n"
+                    "• `/ngay 13/10/2026` : Xem ngày 13/10/2026"
+                )
+                return
 
-    elif text == "/thang" or text == "/baocao":
+        s = database.get_date_summary(target_date)
+        d_raw = s.get("date", "")
+        try:
+            display_date = datetime.strptime(d_raw[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+        except Exception:
+            display_date = d_raw
+
+        profit_symbol = "🟢" if s.get("balance", 0) >= 0 else "🔴"
+        lines = [
+            f"📊 *BÁO CÁO THU CHI NGÀY {display_date}*\n",
+            f"🟢 *TỔNG THU:* `{format_vnd(s.get('total_thu', 0))}`",
+            f"  • Tiền mặt: `{format_vnd(s.get('thu_cash', 0))}`",
+            f"  • Chuyển khoản: `{format_vnd(s.get('thu_transfer', 0))}`\n",
+            f"🔴 *TỔNG CHI:* `{format_vnd(s.get('total_chi', 0))}`",
+            f"  • Tiền mặt: `{format_vnd(s.get('chi_cash', 0))}`",
+            f"  • Chuyển khoản: `{format_vnd(s.get('chi_transfer', 0))}`\n",
+            f"{profit_symbol} *CHÊNH LỆCH TRONG NGÀY:* `{format_vnd(s.get('balance', 0))}`",
+            f"📝 Tổng số giao dịch: {s.get('count', 0)}"
+        ]
+
+        items = s.get("items", [])
+        if items:
+            lines.append("\n📋 *DANH SÁCH GIAO DỊCH TRONG NGÀY:*")
+            for it in items[:15]:
+                t_type = str(it.get("type", "")).lower()
+                sign = "🟢 +" if "thu" in t_type else "🔴 -"
+                method = "💵" if "mặt" in str(it.get("payment_method", "")).lower() or "cash" in str(it.get("payment_method", "")).lower() else "💳"
+                t_time = str(it.get("time", ""))[:5]
+                time_str = f"{t_time} | " if t_time else ""
+                lines.append(
+                    f"`#{it.get('id')}` | {time_str}{sign}{format_vnd(int(it.get('amount', 0)))} {method}\n"
+                    f"   ↳ _{it.get('category', '')}_: {it.get('description', '')}"
+                )
+            if len(items) > 15:
+                lines.append(f"\n_...và {len(items) - 15} giao dịch khác. Mở /sheet để xem toàn bộ._")
+        else:
+            lines.append("\n_(Không có giao dịch nào phát sinh trong ngày này)_")
+
+        send_telegram_message(chat_id, "\n".join(lines))
+
+    elif text.startswith("/khoang"):
+        raw_text = text[7:].strip()
+        cleaned = raw_text.replace("den", " ").replace("đến", " ").replace("-", " ")
+        parts = cleaned.split()
+        if len(parts) < 2:
+            send_telegram_message(
+                chat_id,
+                "⚠️ *Cú pháp xem theo khoảng thời gian:*\n"
+                "`/khoang <từ ngày> <đến ngày>`\n\n"
+                "*Ví dụ:*\n"
+                "• `/khoang 01/10 14/10`\n"
+                "• `/khoang 01/10/2026 14/10/2026`"
+            )
+            return
+
+        start_date = database.parse_user_date(parts[0])
+        end_date = database.parse_user_date(parts[1])
+
+        if not start_date or not end_date:
+            send_telegram_message(chat_id, "⚠️ Ngày nhập vào không đúng định dạng. Vui lòng nhập dạng `dd/mm` hoặc `dd/mm/yyyy`.")
+            return
+
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+
+        s = database.get_range_summary(start_date, end_date)
+        profit_symbol = "🟢" if s.get("balance", 0) >= 0 else "🔴"
+        d1 = datetime.strptime(start_date, "%Y-%m-%d").strftime("%d/%m/%Y")
+        d2 = datetime.strptime(end_date, "%Y-%m-%d").strftime("%d/%m/%Y")
+
+        lines = [
+            f"📅 *BÁO CÁO TÀI CHÍNH TỪ {d1} ĐẾN {d2}*\n",
+            f"🟢 *TỔNG THU:* `{format_vnd(s.get('total_thu', 0))}`",
+            f"  • Tiền mặt: `{format_vnd(s.get('thu_cash', 0))}`",
+            f"  • Chuyển khoản: `{format_vnd(s.get('thu_transfer', 0))}`\n",
+            f"🔴 *TỔNG CHI:* `{format_vnd(s.get('total_chi', 0))}`",
+            f"  • Tiền mặt: `{format_vnd(s.get('chi_cash', 0))}`",
+            f"  • Chuyển khoản: `{format_vnd(s.get('chi_transfer', 0))}`\n",
+            f"{profit_symbol} *LỢI NHUẬN RÒNG:* `{format_vnd(s.get('balance', 0))}`",
+            f"📝 Tổng số giao dịch: {s.get('count', 0)}\n",
+            "📂 *CƠ CẤU CHI PHÍ LỚN NHẤT:*"
+        ]
+
+        if s.get("categories_chi"):
+            for c in s["categories_chi"][:5]:
+                lines.append(f"  • {c['category']}: `{format_vnd(c['total'])}`")
+        else:
+            lines.append("  _(Chưa có chi phí)_")
+
+        if s.get("categories_thu"):
+            lines.append("\n📈 *CƠ CẤU DOANH THU:*")
+            for c in s["categories_thu"][:5]:
+                lines.append(f"  • {c['category']}: `{format_vnd(c['total'])}`")
+
+        send_telegram_message(chat_id, "\n".join(lines))
+
+    elif text.startswith("/thang") or text.startswith("/baocao"):
+        prefix_len = 7 if text.startswith("/baocao") else 6
+        raw_m = text[prefix_len:].strip()
         now = datetime.now()
-        s = database.get_month_summary(now.year, now.month)
+        year, month = now.year, now.month
+
+        if raw_m:
+            parsed_m = database.parse_user_month(raw_m)
+            if not parsed_m:
+                send_telegram_message(
+                    chat_id,
+                    "⚠️ *Định dạng tháng chưa đúng!*\n\n"
+                    "Bạn có thể nhập:\n"
+                    "• `/thang` : Xem tháng này\n"
+                    "• `/thang 9` : Xem tháng 9 năm nay\n"
+                    "• `/thang 09/2026` : Xem tháng 09/2026"
+                )
+                return
+            year, month = parsed_m
+
+        s = database.get_month_summary(year, month)
         profit_symbol = "🟢" if s.get("balance", 0) >= 0 else "🔴"
         msg_lines = [
-            f"📈 *BÁO CÁO TÀI CHÍNH THÁNG {now.month:02d}/{now.year}*\n",
+            f"📈 *BÁO CÁO TÀI CHÍNH THÁNG {month:02d}/{year:04d}*\n",
             f"🟢 *TỔNG THU:* `{format_vnd(s.get('total_thu', 0))}`",
             f"  • Tiền mặt: `{format_vnd(s.get('thu_cash', 0))}`",
             f"  • Chuyển khoản: `{format_vnd(s.get('thu_transfer', 0))}`\n",
@@ -184,8 +304,58 @@ def process_telegram_update(update: dict):
                 msg_lines.append(f"  • {c['category']}: `{format_vnd(c['total'])}`")
         else:
             msg_lines.append("  _(Chưa có chi phí nào)_")
+
+        if s.get("categories_thu"):
+            msg_lines.append("\n🏆 *NGUỒN THU CHÍNH:*")
+            for c in s["categories_thu"][:5]:
+                msg_lines.append(f"  • {c['category']}: `{format_vnd(c['total'])}`")
+
         msg_lines.append("\n👉 Gõ /sheet để mở bảng tính Google Sheets chi tiết.")
         send_telegram_message(chat_id, "\n".join(msg_lines))
+
+    elif text.startswith("/nam"):
+        raw_y = text[4:].strip()
+        target_year = datetime.now().year
+        if raw_y:
+            if raw_y.isdigit() and len(raw_y) == 4:
+                target_year = int(raw_y)
+            else:
+                send_telegram_message(chat_id, "⚠️ Cú pháp: `/nam [yyyy]` (Ví dụ: `/nam 2026` hoặc `/nam`)")
+                return
+
+        s = database.get_year_summary(target_year)
+        profit_symbol = "🟢" if s.get("balance", 0) >= 0 else "🔴"
+        lines = [
+            f"🏆 *BÁO CÁO TÀI CHÍNH NĂM {target_year}*\n",
+            f"🟢 *TỔNG THU CẢ NĂM:* `{format_vnd(s.get('total_thu', 0))}`",
+            f"  • Tiền mặt: `{format_vnd(s.get('thu_cash', 0))}`",
+            f"  • Chuyển khoản: `{format_vnd(s.get('thu_transfer', 0))}`\n",
+            f"🔴 *TỔNG CHI CẢ NĂM:* `{format_vnd(s.get('total_chi', 0))}`",
+            f"  • Tiền mặt: `{format_vnd(s.get('chi_cash', 0))}`",
+            f"  • Chuyển khoản: `{format_vnd(s.get('chi_transfer', 0))}`\n",
+            f"{profit_symbol} *LỢI NHUẬN RÒNG CẢ NĂM:* `{format_vnd(s.get('balance', 0))}`",
+            f"📝 Tổng giao dịch: {s.get('count', 0)}\n",
+            "📊 *KẾT QUẢ TỪNG THÁNG TRONG NĂM:*"
+        ]
+
+        has_active_month = False
+        for m in s.get("monthly_stats", []):
+            if m.get("count", 0) > 0 or m.get("total_thu", 0) > 0 or m.get("total_chi", 0) > 0:
+                has_active_month = True
+                m_icon = "🟢" if m.get("balance", 0) >= 0 else "🔴"
+                lines.append(
+                    f"  • *T{m['month']:02d}:* Thu `{format_vnd(m['total_thu'])}` | Chi `{format_vnd(m['total_chi'])}` ➡️ {m_icon} `{format_vnd(m['balance'])}`"
+                )
+
+        if not has_active_month:
+            lines.append("  _(Năm này chưa có dữ liệu giao dịch)_")
+
+        if s.get("categories_chi"):
+            lines.append("\n📂 *TOP CHI PHÍ LỚN NHẤT TRONG NĂM:*")
+            for c in s["categories_chi"][:5]:
+                lines.append(f"  • {c['category']}: `{format_vnd(c['total'])}`")
+
+        send_telegram_message(chat_id, "\n".join(lines))
 
     elif text == "/ds":
         txs = database.get_recent_transactions(limit=10)
@@ -234,10 +404,87 @@ def process_telegram_update(update: dict):
         else:
             send_telegram_message(chat_id, "⚠️ Cú pháp: `/hoc <từ khóa> = <thu/chi>: <danh mục>`")
 
+    # ==========================================
+    # 2. XỬ LÝ FILE SAO KÊ NGÂN HÀNG (DEDUPLICATION)
+    # ==========================================
+    elif doc:
+        filename = (doc.get("file_name") or "").lower()
+        if not (filename.endswith(".xlsx") or filename.endswith(".xls") or filename.endswith(".csv")):
+            send_telegram_message(chat_id, "⚠️ Vui lòng gửi file sao kê định dạng Excel (.xlsx, .xls) hoặc .csv từ ngân hàng.")
+            return
+
+        send_telegram_message(chat_id, "📑 Đang phân tích và đối soát chống trùng lặp sao kê... Vui lòng chờ vài giây.")
+        file_id = doc.get("file_id")
+        doc_bytes = download_telegram_file(file_id)
+        if not doc_bytes:
+            send_telegram_message(chat_id, "❌ Không thể tải file sao kê từ Telegram.")
+            return
+
+        temp_path = config.DATA_DIR / f"temp_{doc.get('file_name')}"
+        try:
+            with open(temp_path, "wb") as f:
+                f.write(doc_bytes)
+
+            items = BankStatementParser.parse_excel_statement(temp_path)
+            if not items:
+                send_telegram_message(chat_id, "⚠️ Không tìm thấy dòng giao dịch hợp lệ nào trong file sao kê.")
+                return
+
+            unique_items, duplicate_items = database.reconcile_and_deduplicate(items)
+
+            total_in = 0
+            total_out = 0
+            for it in unique_items:
+                if it["type"] == "thu":
+                    total_in += it["amount"]
+                else:
+                    total_out += it["amount"]
+
+            saved_count = 0
+            if unique_items:
+                saved_count = database.add_batch_transactions(unique_items)
+
+            msg_lines = [
+                "🎉 *ĐỐI SOÁT & NHẬP SAO KÊ THÀNH CÔNG!*\n",
+                f"• Tổng số giao dịch trong file: *{len(items)}*",
+                f"• ✅ Giao dịch mới đã lưu: *{saved_count}*",
+                f"• 🛡️ *Giao dịch trùng lặp bỏ qua: {len(duplicate_items)}*",
+            ]
+
+            if duplicate_items:
+                msg_lines.append("\n🔎 *BẢN GHI TRÙNG ĐƯỢC PHÁT HIỆN:*")
+                for dup in duplicate_items[:5]:
+                    st_it = dup["statement_item"]
+                    ex_it = dup["matched_existing"]
+                    st_sign = "+" if st_it.get("type") == "thu" else "-"
+                    msg_lines.append(
+                        f"  ↳ `{st_sign}{format_vnd(st_it.get('amount', 0))}` ngày {st_it.get('date')}: Khớp với GD `#{ex_it.get('id')}` ({ex_it.get('description', '')})"
+                    )
+                if len(duplicate_items) > 5:
+                    msg_lines.append(f"  _(và {len(duplicate_items) - 5} giao dịch trùng khác đã tự động bỏ qua)_")
+
+            msg_lines.extend([
+                "\n━━━━━━━━━━━━━━━━━━",
+                f"• 🟢 Tổng tiền vào (Thu mới): *{format_vnd(total_in)}*",
+                f"• 🔴 Tổng tiền ra (Chi mới): *{format_vnd(total_out)}*",
+                "━━━━━━━━━━━━━━━━━━",
+                "👉 Gõ /sheet để mở bảng tính Google Sheets chi tiết."
+            ])
+            send_telegram_message(chat_id, "\n".join(msg_lines))
+        except Exception as e:
+            traceback.print_exc()
+            send_telegram_message(chat_id, f"❌ Lỗi khi phân tích sao kê: {e}")
+        finally:
+            try:
+                if temp_path.exists():
+                    os.remove(temp_path)
+            except Exception:
+                pass
+
+    # ==========================================
+    # 3. XỬ LÝ TIN NHẮN THOẠI (VOICE MESSAGE)
+    # ==========================================
     elif voice:
-        # ==========================================
-        # 2. XỬ LÝ TIN NHẮN THOẠI (VOICE MESSAGE)
-        # ==========================================
         send_telegram_message(chat_id, "🎙 Đang lắng nghe và xử lý tin nhắn thoại qua Gemini AI...")
         file_id = voice.get("file_id")
         mime_type = voice.get("mime_type", "audio/ogg")
@@ -250,7 +497,7 @@ def process_telegram_update(update: dict):
                 send_telegram_message(
                     chat_id,
                     "⚠️ Chưa nghe rõ số tiền hoặc nội dung thu chi từ tin nhắn thoại.\n\n"
-                    "Bạn hãy nói rõ hơn (VD: *'Thu 500k trám răng tiền mặt'* hoặc *'Chi 70k hoa quả'*), hoặc gõ text nhé."
+                    "Bạn hãy nói rõ hơn (VD: *'Thu chị Quỳnh 500k khám răng'* hoặc *'Chi 70k hoa quả'*), hoặc gõ text nhé."
                 )
             else:
                 tx_id = database.add_transaction(
@@ -289,10 +536,10 @@ def process_telegram_update(update: dict):
                 )
                 send_telegram_message(chat_id, msg)
 
+    # ==========================================
+    # 4. XỬ LÝ HÓA ĐƠN CHỤP ẢNH (GEMINI VISION OCR)
+    # ==========================================
     elif photo:
-        # ==========================================
-        # 3. XỬ LÝ HÓA ĐƠN CHỤP ẢNH (GEMINI VISION OCR)
-        # ==========================================
         send_telegram_message(chat_id, "📸 Đang quét hóa đơn bằng Gemini Vision...")
         file_id = photo[-1].get("file_id")
         img_bytes = download_telegram_file(file_id)
@@ -333,10 +580,10 @@ def process_telegram_update(update: dict):
                 )
                 send_telegram_message(chat_id, msg)
 
+    # ==========================================
+    # 5. XỬ LÝ NHẬP TIỀN BẰNG TEXT
+    # ==========================================
     elif text:
-        # ==========================================
-        # 4. XỬ LÝ NHẬP TIỀN BẰNG TEXT
-        # ==========================================
         parsed = GeminiParser.parse_text(text)
         if not parsed:
             send_telegram_message(
@@ -346,7 +593,8 @@ def process_telegram_update(update: dict):
                 "• `+ 500k tram rang` (Thu tiền mặt)\n"
                 "• `+ 1.5tr ck khach boc rang` (Thu chuyển khoản)\n"
                 "• `- 70k hoa qua thap huong` (Chi tiền mặt)\n"
-                "• `- 1.2tr ck labo rang su` (Chi chuyển khoản)"
+                "• `- 1.2tr ck labo rang su` (Chi chuyển khoản)\n"
+                "• Hoặc gửi tin nhắn thoại để AI tự nghe và ghi chép."
             )
         else:
             tx_id = database.add_transaction(

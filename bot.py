@@ -16,9 +16,7 @@ from telegram.ext import (
 import config
 import database
 from ai_parser import GeminiParser, RuleEngine, rules_mgr
-
 from bank_reconciler import BankStatementParser, ReportGenerator
-
 
 # Setup logging
 logging.basicConfig(
@@ -45,17 +43,20 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `+ 2tr ck khach Trang boc rang su` ➡️ Khách chuyển khoản\n"
         "• `- 70k hoa qua thap huong` ➡️ Chi tiền mua hoa quả\n"
         "• `- 1.2tr ck labo rang su chi Nga` ➡️ Chi tiền làm labo\n"
-        "• 🎙 *Giọng nói:* Giữ nút Micro nói (VD: *'Thu 500k trám răng'*), AI tự nghe và ghi chép.\n"
+        "• 🎙 *Giọng nói:* Giữ nút Micro nói (VD: *'Thu chị Quỳnh 500k khám răng'*), AI tự nghe và ghi chép.\n"
         "• 📸 *Ảnh chụp:* Chụp ảnh hóa đơn/phiếu thu gửi vào đây để AI đọc tự động.\n\n"
-        "📌 *CÁC LỆNH QUẢN TRỊ TRÊN GOOGLE SHEETS:*\n"
-        "• /sheet : Mở trực tiếp Sổ Quỹ Google Sheets online\n"
-        "• /today : Xem nhanh tổng kết thu chi hôm nay\n"
-        "• /thang : Xem nhanh tổng kết doanh thu & chi phí tháng này\n"
+        "📌 *CÁC LỆNH BÁO CÁO & TRUY VẤN TÀI CHÍNH:*\n"
+        "• /today : Xem thu chi hôm nay\n"
+        "• `/ngay [dd/mm]` : Xem thu chi ngày chỉ định (VD: `/ngay 13/10`)\n"
+        "• `/khoang <từ> <đến>` : Xem thu chi theo khoảng (VD: `/khoang 01/10 14/10`)\n"
+        "• `/thang [mm/yyyy]` : Xem báo cáo tháng chỉ định (VD: `/thang 9` hoặc `/thang 10/2026`)\n"
+        "• `/nam [yyyy]` : Xem báo cáo tổng kết cả năm (VD: `/nam 2026`)\n"
         "• /ds : Xem 10 giao dịch vừa nhập gần nhất\n"
-        "• /xoa `<id>` : Xóa giao dịch nếu nhập nhầm (VD: `/xoa 5`)\n"
+        "• `/xoa <id>` : Xóa giao dịch nếu nhập nhầm (VD: `/xoa 5`)\n"
+        "• /sheet : Mở trực tiếp Sổ Quỹ Google Sheets online (mỗi năm 1 tab riêng)\n"
         "• /excel : Tải file Excel của Google Sheets về máy\n"
-        "• /hoc `<từ khóa> = <thu/chi>: <danh mục>` : Dạy từ mới cho AI\n\n"
-        "📥 *CUỐI THÁNG:* Bạn chỉ cần gửi file Excel/CSV sao kê ngân hàng vào đây, hệ thống sẽ tự động bóc tách và đẩy lên Google Sheets!\n\n"
+        "• `/hoc <từ khóa> = <thu/chi>: <danh mục>` : Dạy từ mới cho AI\n\n"
+        "🛡️ *ĐỐI SOÁT & CHỐNG TRÙNG LẶP:* Cuối tháng bạn gửi file sao kê ngân hàng (.xlsx/.csv), hệ thống tự động nhận diện và bỏ qua các khoản đã nhập qua giọng nói/tin nhắn trước đó!\n\n"
         f"🆔 *Telegram ID của bạn:* `{user.id}`"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
@@ -72,56 +73,232 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.MARKDOWN
     )
 
-
-
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await cmd_start(update, context)
 
 async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """View today's financial summary."""
-    s = database.get_today_summary()
-    date_str = datetime.now().strftime("%d/%m/%Y")
-    
-    profit_symbol = "🟢" if s["balance"] >= 0 else "🔴"
-    msg = (
-        f"📊 *BÁO CÁO THU CHI HÔM NAY ({date_str})*\n\n"
-        f"🟢 *TỔNG THU:* `{format_vnd(s['total_thu'])}`\n"
-        f"  • Tiền mặt: `{format_vnd(s['thu_cash'])}`\n"
-        f"  • Chuyển khoản: `{format_vnd(s['thu_transfer'])}`\n\n"
-        f"🔴 *TỔNG CHI:* `{format_vnd(s['total_chi'])}`\n"
-        f"  • Tiền mặt: `{format_vnd(s['chi_cash'])}`\n"
-        f"  • Chuyển khoản: `{format_vnd(s['chi_transfer'])}`\n\n"
-        f"{profit_symbol} *CHÊNH LỆCH TRONG NGÀY:* `{format_vnd(s['balance'])}`\n"
-        f"📝 Tổng số giao dịch: {s['count']}"
-    )
-    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+    await cmd_day(update, context)
+
+async def cmd_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """View financial summary of a specific date or today.
+    Syntax: /ngay [dd/mm/yyyy hoặc dd/mm] (Ví dụ: /ngay 13/10 hoặc /ngay)
+    """
+    args = context.args or []
+    target_date = None
+    if args:
+        target_date = database.parse_user_date(" ".join(args))
+        if not target_date:
+            await update.message.reply_text(
+                "⚠️ *Định dạng ngày chưa đúng!*\n\n"
+                "Bạn có thể nhập:\n"
+                "• `/ngay` : Xem hôm nay\n"
+                "• `/ngay 13/10` : Xem ngày 13 tháng 10 năm nay\n"
+                "• `/ngay 13/10/2026` : Xem ngày 13/10/2026",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+
+    s = database.get_date_summary(target_date)
+    d_raw = s.get("date", "")
+    try:
+        dt_obj = datetime.strptime(d_raw[:10], "%Y-%m-%d")
+        display_date = dt_obj.strftime("%d/%m/%Y")
+    except Exception:
+        display_date = d_raw
+
+    profit_symbol = "🟢" if s.get("balance", 0) >= 0 else "🔴"
+    lines = [
+        f"📊 *BÁO CÁO THU CHI NGÀY {display_date}*\n",
+        f"🟢 *TỔNG THU:* `{format_vnd(s.get('total_thu', 0))}`",
+        f"  • Tiền mặt: `{format_vnd(s.get('thu_cash', 0))}`",
+        f"  • Chuyển khoản: `{format_vnd(s.get('thu_transfer', 0))}`\n",
+        f"🔴 *TỔNG CHI:* `{format_vnd(s.get('total_chi', 0))}`",
+        f"  • Tiền mặt: `{format_vnd(s.get('chi_cash', 0))}`",
+        f"  • Chuyển khoản: `{format_vnd(s.get('chi_transfer', 0))}`\n",
+        f"{profit_symbol} *CHÊNH LỆCH TRONG NGÀY:* `{format_vnd(s.get('balance', 0))}`",
+        f"📝 Tổng số giao dịch: {s.get('count', 0)}"
+    ]
+
+    items = s.get("items", [])
+    if items:
+        lines.append("\n📋 *DANH SÁCH GIAO DỊCH TRONG NGÀY:*")
+        for it in items[:15]:
+            t_type = str(it.get("type", "")).lower()
+            sign = "🟢 +" if "thu" in t_type else "🔴 -"
+            method = "💵" if "mặt" in str(it.get("payment_method", "")).lower() or "cash" in str(it.get("payment_method", "")).lower() else "💳"
+            t_time = str(it.get("time", ""))[:5]
+            time_str = f"{t_time} | " if t_time else ""
+            lines.append(
+                f"`#{it.get('id')}` | {time_str}{sign}{format_vnd(int(it.get('amount', 0)))} {method}\n"
+                f"   ↳ _{it.get('category', '')}_: {it.get('description', '')}"
+            )
+        if len(items) > 15:
+            lines.append(f"\n_...và {len(items) - 15} giao dịch khác. Mở /sheet để xem toàn bộ._")
+    else:
+        lines.append("\n_(Không có giao dịch nào phát sinh trong ngày này)_")
+
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+
+async def cmd_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """View transactions and financial summary in a date range.
+    Syntax: /khoang <tu_ngay> <den_ngay> (VD: /khoang 01/10 14/10)
+    """
+    args = context.args or []
+    raw_text = " ".join(args).strip()
+    cleaned = raw_text.replace("den", " ").replace("đến", " ").replace("-", " ")
+    parts = cleaned.split()
+    if len(parts) < 2:
+        await update.message.reply_text(
+            "⚠️ *Cú pháp xem theo khoảng thời gian:*\n"
+            "`/khoang <từ ngày> <đến ngày>`\n\n"
+            "*Ví dụ:*\n"
+            "• `/khoang 01/10 14/10`\n"
+            "• `/khoang 01/10/2026 14/10/2026`",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+
+    start_date = database.parse_user_date(parts[0])
+    end_date = database.parse_user_date(parts[1])
+
+    if not start_date or not end_date:
+        await update.message.reply_text("⚠️ Ngày nhập vào không đúng định dạng. Vui lòng nhập dạng `dd/mm` hoặc `dd/mm/yyyy`.", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    s = database.get_range_summary(start_date, end_date)
+    profit_symbol = "🟢" if s.get("balance", 0) >= 0 else "🔴"
+
+    d1 = datetime.strptime(start_date, "%Y-%m-%d").strftime("%d/%m/%Y")
+    d2 = datetime.strptime(end_date, "%Y-%m-%d").strftime("%d/%m/%Y")
+
+    lines = [
+        f"📅 *BÁO CÁO TÀI CHÍNH TỪ {d1} ĐẾN {d2}*\n",
+        f"🟢 *TỔNG THU:* `{format_vnd(s.get('total_thu', 0))}`",
+        f"  • Tiền mặt: `{format_vnd(s.get('thu_cash', 0))}`",
+        f"  • Chuyển khoản: `{format_vnd(s.get('thu_transfer', 0))}`\n",
+        f"🔴 *TỔNG CHI:* `{format_vnd(s.get('total_chi', 0))}`",
+        f"  • Tiền mặt: `{format_vnd(s.get('chi_cash', 0))}`",
+        f"  • Chuyển khoản: `{format_vnd(s.get('chi_transfer', 0))}`\n",
+        f"{profit_symbol} *LỢI NHUẬN RÒNG:* `{format_vnd(s.get('balance', 0))}`",
+        f"📝 Tổng số giao dịch: {s.get('count', 0)}\n",
+        "📂 *CƠ CẤU CHI PHÍ LỚN NHẤT:*"
+    ]
+
+    if s.get("categories_chi"):
+        for c in s["categories_chi"][:5]:
+            lines.append(f"  • {c['category']}: `{format_vnd(c['total'])}`")
+    else:
+        lines.append("  _(Chưa có chi phí)_")
+
+    if s.get("categories_thu"):
+        lines.append("\n📈 *CƠ CẤU DOANH THU:*")
+        for c in s["categories_thu"][:5]:
+            lines.append(f"  • {c['category']}: `{format_vnd(c['total'])}`")
+
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
 async def cmd_month(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """View current month summary."""
+    """View month summary (current or specific month).
+    Syntax: /thang [mm/yyyy hoặc mm] (VD: /thang 9 hoặc /thang 09/2026 hoặc /thang)
+    """
+    args = context.args or []
     now = datetime.now()
-    s = database.get_month_summary(now.year, now.month)
-    
-    profit_symbol = "🟢" if s["balance"] >= 0 else "🔴"
+    year, month = now.year, now.month
+
+    if args:
+        parsed_m = database.parse_user_month(" ".join(args))
+        if not parsed_m:
+            await update.message.reply_text(
+                "⚠️ *Định dạng tháng chưa đúng!*\n\n"
+                "Bạn có thể nhập:\n"
+                "• `/thang` : Xem tháng này\n"
+                "• `/thang 9` : Xem tháng 9 năm nay\n"
+                "• `/thang 09/2026` : Xem tháng 09/2026",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+        year, month = parsed_m
+
+    s = database.get_month_summary(year, month)
+    profit_symbol = "🟢" if s.get("balance", 0) >= 0 else "🔴"
     msg_lines = [
-        f"📈 *BÁO CÁO TÀI CHÍNH THÁNG {now.month:02d}/{now.year}*\n",
-        f"🟢 *TỔNG THU:* `{format_vnd(s['total_thu'])}`",
-        f"  • Tiền mặt: `{format_vnd(s['thu_cash'])}`",
-        f"  • Chuyển khoản: `{format_vnd(s['thu_transfer'])}`\n",
-        f"🔴 *TỔNG CHI:* `{format_vnd(s['total_chi'])}`",
-        f"  • Tiền mặt: `{format_vnd(s['chi_cash'])}`",
-        f"  • Chuyển khoản: `{format_vnd(s['chi_transfer'])}`\n",
-        f"{profit_symbol} *LỢI NHUẬN RÒNG:* `{format_vnd(s['balance'])}`\n",
+        f"📈 *BÁO CÁO TÀI CHÍNH THÁNG {month:02d}/{year:04d}*\n",
+        f"🟢 *TỔNG THU:* `{format_vnd(s.get('total_thu', 0))}`",
+        f"  • Tiền mặt: `{format_vnd(s.get('thu_cash', 0))}`",
+        f"  • Chuyển khoản: `{format_vnd(s.get('thu_transfer', 0))}`\n",
+        f"🔴 *TỔNG CHI:* `{format_vnd(s.get('total_chi', 0))}`",
+        f"  • Tiền mặt: `{format_vnd(s.get('chi_cash', 0))}`",
+        f"  • Chuyển khoản: `{format_vnd(s.get('chi_transfer', 0))}`\n",
+        f"{profit_symbol} *LỢI NHUẬN RÒNG:* `{format_vnd(s.get('balance', 0))}`\n",
         "📂 *CƠ CẤU CHI PHÍ NỔI BẬT:*"
     ]
 
-    if s["categories_chi"]:
+    if s.get("categories_chi"):
         for c in s["categories_chi"][:5]:
-            msg_lines.append(f"  • {c['category']}: `{format_vnd(c['total'])}` ({c['count']} lần)")
+            msg_lines.append(f"  • {c['category']}: `{format_vnd(c['total'])}`")
     else:
         msg_lines.append("  _(Chưa có chi phí nào)_")
 
+    if s.get("categories_thu"):
+        msg_lines.append("\n🏆 *NGUỒN THU CHÍNH:*")
+        for c in s["categories_thu"][:5]:
+            msg_lines.append(f"  • {c['category']}: `{format_vnd(c['total'])}`")
+
     msg_lines.append("\n👉 Gõ /excel để tải file báo cáo Excel chi tiết.")
     await update.message.reply_text("\n".join(msg_lines), parse_mode=ParseMode.MARKDOWN)
+
+async def cmd_year(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """View annual financial report.
+    Syntax: /nam [yyyy] (VD: /nam 2026 hoặc /nam)
+    """
+    args = context.args or []
+    target_year = datetime.now().year
+    if args:
+        val = args[0].strip()
+        if val.isdigit() and len(val) == 4:
+            target_year = int(val)
+        else:
+            await update.message.reply_text("⚠️ Cú pháp: `/nam [yyyy]` (Ví dụ: `/nam 2026` hoặc `/nam`)", parse_mode=ParseMode.MARKDOWN)
+            return
+
+    s = database.get_year_summary(target_year)
+    profit_symbol = "🟢" if s.get("balance", 0) >= 0 else "🔴"
+
+    lines = [
+        f"🏆 *BÁO CÁO TÀI CHÍNH NĂM {target_year}*\n",
+        f"🟢 *TỔNG THU CẢ NĂM:* `{format_vnd(s.get('total_thu', 0))}`",
+        f"  • Tiền mặt: `{format_vnd(s.get('thu_cash', 0))}`",
+        f"  • Chuyển khoản: `{format_vnd(s.get('thu_transfer', 0))}`\n",
+        f"🔴 *TỔNG CHI CẢ NĂM:* `{format_vnd(s.get('total_chi', 0))}`",
+        f"  • Tiền mặt: `{format_vnd(s.get('chi_cash', 0))}`",
+        f"  • Chuyển khoản: `{format_vnd(s.get('chi_transfer', 0))}`\n",
+        f"{profit_symbol} *LỢI NHUẬN RÒNG CẢ NĂM:* `{format_vnd(s.get('balance', 0))}`",
+        f"📝 Tổng giao dịch: {s.get('count', 0)}\n",
+        "📊 *KẾT QUẢ TỪNG THÁNG TRONG NĂM:*"
+    ]
+
+    has_active_month = False
+    for m in s.get("monthly_stats", []):
+        if m.get("count", 0) > 0 or m.get("total_thu", 0) > 0 or m.get("total_chi", 0) > 0:
+            has_active_month = True
+            m_icon = "🟢" if m.get("balance", 0) >= 0 else "🔴"
+            lines.append(
+                f"  • *T{m['month']:02d}:* Thu `{format_vnd(m['total_thu'])}` | Chi `{format_vnd(m['total_chi'])}` ➡️ {m_icon} `{format_vnd(m['balance'])}`"
+            )
+
+    if not has_active_month:
+        lines.append("  _(Năm này chưa có dữ liệu giao dịch)_")
+
+    if s.get("categories_chi"):
+        lines.append("\n📂 *TOP CHI PHÍ LỚN NHẤT TRONG NĂM:*")
+        for c in s["categories_chi"][:5]:
+            lines.append(f"  • {c['category']}: `{format_vnd(c['total'])}`")
+
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
 async def cmd_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Export and send live Excel file directly from Google Sheets."""
@@ -182,10 +359,8 @@ async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("⚠️ ID phải là chữ số. Ví dụ: `/xoa 12`", parse_mode=ParseMode.MARKDOWN)
 
-
 async def cmd_teach(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Teach new rule/keyword to the bot."""
-    # Syntax: /hoc [keyword] = [thu/chi]: [category]
     raw_args = " ".join(context.args).strip()
     if "=" not in raw_args or ":" not in raw_args:
         help_msg = (
@@ -229,7 +404,7 @@ async def cmd_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if url:
         msg = (
             f"📊 *BẢNG TÍNH GOOGLE SHEETS SỔ QUỸ*\n\n"
-            f"🔗 Bấm vào link dưới đây để mở xem trực tiếp trên iPhone:\n"
+            f"🔗 Bấm vào link dưới đây để mở xem trực tiếp trên iPhone/Máy tính:\n"
             f"[👉 Mở Google Sheets Sổ Quỹ]({url})"
         )
     else:
@@ -255,15 +430,15 @@ async def notify_sheets_error_bot(update: Update):
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle text input from user (e.g. '+ 500k tram rang', '- 70k hoa qua')."""
+    """Handle text transaction input."""
     user_id = update.effective_user.id
     if not is_user_allowed(user_id):
+        await update.message.reply_text("⛔ Bạn chưa được cấp quyền sử dụng hệ thống này.")
         return
 
     text = update.message.text.strip()
-    if not text:
-        return
 
+    # Parse transaction
     parsed = GeminiParser.parse_text(text)
     if not parsed:
         await update.message.reply_text(
@@ -272,11 +447,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• `+ 500k tram rang` (Thu tiền mặt)\n"
             "• `+ 1.5tr ck khach boc rang` (Thu chuyển khoản)\n"
             "• `- 70k hoa qua thap huong` (Chi tiền mặt)\n"
-            "• `- 1.2tr ck labo rang su` (Chi chuyển khoản)"
+            "• `- 1.2tr ck labo rang su` (Chi chuyển khoản)\n"
+            "• Hoặc bấm giữ biểu tượng Micro để ghi âm giọng nói."
         )
         return
 
-    # Save directly to Google Sheets database
+    # Add transaction to Google Sheets
     tx_id = database.add_transaction(
         tx_type=parsed["type"],
         amount=parsed["amount"],
@@ -294,7 +470,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_thu = parsed["type"] == "thu"
     sign_text = "🟢 THU VÀO" if is_thu else "🔴 CHI RA"
     method_text = "💵 Tiền mặt" if parsed["payment_method"] == "cash" else "💳 Chuyển khoản"
-    engine_badge = "🤖 Gemini AI" if parsed.get("engine") == "gemini-ai" else "⚡ Rule Engine (Quy tắc)"
+    engine_badge = "🤖 Gemini AI" if parsed.get("engine") == "gemini-ai" else "⚡ Rule Engine"
 
     msg = (
         f"✅ *ĐÃ GHI NHẬN GIAO DỊCH #{tx_id}*\n"
@@ -312,21 +488,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle photo (receipt / invoice OCR)."""
+    """Handle receipt photo with Gemini Vision OCR."""
     user_id = update.effective_user.id
     if not is_user_allowed(user_id):
         return
 
-    await update.message.reply_text("📸 Đang quét hóa đơn bằng Gemini Vision... Vui lòng chờ vài giây.")
+    photo = update.message.photo[-1]
+    await update.message.reply_text("📸 Đang quét hóa đơn bằng Gemini Vision AI... Vui lòng đợi trong giây lát.")
 
     try:
-        photo = update.message.photo[-1]  # Highest resolution
-        file = await photo.get_file()
-        file_bytes = await file.download_as_bytearray()
+        photo_file = await photo.get_file()
+        photo_bytes = await photo_file.download_as_bytearray()
 
-        parsed = GeminiParser.parse_receipt_image(bytes(file_bytes), mime_type="image/jpeg")
+        parsed = GeminiParser.parse_receipt_image(bytes(photo_bytes), mime_type="image/jpeg")
         if not parsed:
-            await update.message.reply_text("⚠️ Không nhận diện được thông tin hóa đơn từ ảnh. Bạn vui lòng chụp rõ nét hơn hoặc nhập tay bằng text.")
+            await update.message.reply_text("⚠️ Không nhận diện được hóa đơn từ ảnh. Bạn vui lòng chụp lại rõ nét hơn hoặc nhập tay bằng text.")
             return
 
         tx_id = database.add_transaction(
@@ -343,9 +519,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await notify_sheets_error_bot(update)
             return
 
+        is_thu = parsed.get("type") == "thu"
+        sign_text = "🟢 THU VÀO" if is_thu else "🔴 CHI RA"
+
         msg = (
             f"🧾 *ĐÃ QUÉT VÀ LƯU HÓA ĐƠN #{tx_id}*\n"
             f"━━━━━━━━━━━━━━━━━━\n"
+            f"• Loại: *{sign_text}*\n"
             f"• Số tiền: *{format_vnd(parsed['amount'])}*\n"
             f"• Danh mục: _{parsed['category']}_\n"
             f"• Nội dung: {parsed.get('description', '')}\n"
@@ -425,7 +605,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Lỗi khi xử lý giọng nói: {e}")
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle bank statement files (.xlsx, .xls, .csv)."""
+    """Handle bank statement files (.xlsx, .xls, .csv) with Smart Deduplication."""
     user_id = update.effective_user.id
     if not is_user_allowed(user_id):
         return
@@ -437,7 +617,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Vui lòng gửi file sao kê dạng Excel (.xlsx, .xls) hoặc .csv từ ngân hàng.")
         return
 
-    await update.message.reply_text("📑 Đang phân tích sao kê ngân hàng... Vui lòng đợi trong giây lát.")
+    await update.message.reply_text("📑 Đang phân tích và đối soát chống trùng lặp sao kê... Vui lòng đợi trong giây lát.")
 
     try:
         file = await doc.get_file()
@@ -450,34 +630,55 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ Không tìm thấy dòng giao dịch hợp lệ nào trong file sao kê.")
             return
 
+        # Smart Deduplication against Google Sheets records
+        unique_items, duplicate_items = database.reconcile_and_deduplicate(items)
+
         total_in = 0
         total_out = 0
-        for it in items:
+        for it in unique_items:
             if it["type"] == "thu":
                 total_in += it["amount"]
             else:
                 total_out += it["amount"]
 
-        # Batch save directly to Google Sheets
-        saved_count = database.add_batch_transactions(items)
-
+        # Batch save unique items directly to Google Sheets
+        saved_count = 0
+        if unique_items:
+            saved_count = database.add_batch_transactions(unique_items)
 
         # Clean up temporary file
         try:
             os.remove(save_path)
-        except:
+        except Exception:
             pass
 
-        msg = (
-            f"🎉 *ĐÃ ĐỐI SOÁT & NHẬP SAO KÊ THÀNH CÔNG!*\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"• Số giao dịch đã nhập: *{saved_count}*\n"
-            f"• 🟢 Tổng tiền vào (Thu): *{format_vnd(total_in)}*\n"
-            f"• 🔴 Tổng tiền ra (Chi): *{format_vnd(total_out)}*\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"👉 Gõ /excel để tải ngay báo cáo tổng hợp mới nhất!"
-        )
-        await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+        msg_lines = [
+            "🎉 *ĐỐI SOÁT & NHẬP SAO KÊ THÀNH CÔNG!*\n",
+            f"• Tổng số giao dịch trong file: *{len(items)}*",
+            f"• ✅ Giao dịch mới đã lưu: *{saved_count}*",
+            f"• 🛡️ *Giao dịch trùng lặp bỏ qua: {len(duplicate_items)}*",
+        ]
+
+        if duplicate_items:
+            msg_lines.append("\n🔎 *BẢN GHI TRÙNG ĐƯỢC PHÁT HIỆN:*")
+            for dup in duplicate_items[:5]:
+                st_it = dup["statement_item"]
+                ex_it = dup["matched_existing"]
+                st_sign = "+" if st_it.get("type") == "thu" else "-"
+                msg_lines.append(
+                    f"  ↳ `{st_sign}{format_vnd(st_it.get('amount', 0))}` ngày {st_it.get('date')}: Khớp với GD `#{ex_it.get('id')}` ({ex_it.get('description', '')})"
+                )
+            if len(duplicate_items) > 5:
+                msg_lines.append(f"  _(và {len(duplicate_items) - 5} giao dịch trùng khác đã tự động bỏ qua)_")
+
+        msg_lines.extend([
+            "\n━━━━━━━━━━━━━━━━━━",
+            f"• 🟢 Tổng tiền vào (Thu mới): *{format_vnd(total_in)}*",
+            f"• 🔴 Tổng tiền ra (Chi mới): *{format_vnd(total_out)}*",
+            "━━━━━━━━━━━━━━━━━━",
+            "👉 Gõ /excel để tải ngay báo cáo tổng hợp mới nhất!"
+        ])
+        await update.message.reply_text("\n".join(msg_lines), parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
         logger.error(f"Error handling document: {e}")
         await update.message.reply_text(f"❌ Lỗi khi phân tích file sao kê: {e}")
@@ -485,29 +686,26 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def post_init(application: Application):
     """Register command menu in Telegram UI."""
     commands = [
-        BotCommand("sheet", "Mở Google Sheets Sổ Quỹ trực tuyến"),
         BotCommand("today", "Xem nhanh thu chi hôm nay"),
-        BotCommand("thang", "Xem tổng kết tháng này"),
+        BotCommand("ngay", "Xem thu chi theo ngày (/ngay dd/mm)"),
+        BotCommand("khoang", "Xem thu chi theo khoảng ngày"),
+        BotCommand("thang", "Xem báo cáo tháng (/thang mm/yyyy)"),
+        BotCommand("nam", "Xem báo cáo cả năm (/nam yyyy)"),
         BotCommand("ds", "Xem 10 giao dịch gần nhất"),
-        BotCommand("xoa", "Xóa giao dịch nhập nhầm (/xoa <id>)"),
+        BotCommand("sheet", "Mở Google Sheets Sổ Quỹ trực tuyến"),
         BotCommand("excel", "Tải file Excel về máy"),
+        BotCommand("xoa", "Xóa giao dịch nhập nhầm (/xoa <id>)"),
         BotCommand("hoc", "Dạy từ khóa mới cho AI"),
         BotCommand("help", "Xem cẩm nang hướng dẫn chi tiết"),
     ]
     await application.bot.set_my_commands(commands)
     logger.info("Command menu registered successfully.")
 
-
 def main():
     token = config.TELEGRAM_BOT_TOKEN
     if not token or token == "YOUR_TELEGRAM_BOT_TOKEN":
         print("\n" + "="*60)
         print("⚠️ CHƯA CẤU HÌNH TELEGRAM BOT TOKEN!")
-        print("Vui lòng mở file .env và điền TELEGRAM_BOT_TOKEN vào.")
-        print("Cách lấy token miễn phí chỉ mất 1 phút:")
-        print("1. Mở Telegram, tìm @BotFather")
-        print("2. Gõ lệnh /newbot và làm theo hướng dẫn")
-        print("3. Copy chuỗi Token nhận được dán vào file .env")
         print("="*60 + "\n")
         sys.exit(1)
 
@@ -518,9 +716,11 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("today", cmd_today))
-    app.add_handler(CommandHandler("ngay", cmd_today))
+    app.add_handler(CommandHandler("ngay", cmd_day))
+    app.add_handler(CommandHandler("khoang", cmd_range))
     app.add_handler(CommandHandler("thang", cmd_month))
     app.add_handler(CommandHandler("baocao", cmd_month))
+    app.add_handler(CommandHandler("nam", cmd_year))
     app.add_handler(CommandHandler("sheet", cmd_sheet))
     app.add_handler(CommandHandler("link", cmd_sheet))
     app.add_handler(CommandHandler("excel", cmd_excel))
@@ -530,9 +730,6 @@ def main():
     app.add_handler(CommandHandler("hoc", cmd_teach))
     app.add_handler(CommandHandler("rule", cmd_teach))
     app.add_handler(CommandHandler("id", cmd_id))
-
-
-
 
     # Messages
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
