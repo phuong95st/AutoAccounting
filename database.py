@@ -171,6 +171,14 @@ def add_transaction(
     notes: Optional[str] = None
 ) -> Optional[int]:
     """Thêm một giao dịch vào Google Sheets (tự động phân bổ vào Sheet năm tương ứng)."""
+    try:
+        amt_num = int(amount)
+    except (ValueError, TypeError):
+        return None
+
+    if amt_num <= 0:
+        return None
+
     now = datetime.now(TZ_VN)
     d = tx_date or now.strftime("%Y-%m-%d")
     t = tx_time or now.strftime("%H:%M:%S")
@@ -180,7 +188,7 @@ def add_transaction(
         "date": d,
         "time": t,
         "type": tx_type.lower().strip(),
-        "amount": amount,
+        "amount": amt_num,
         "category": category,
         "description": description,
         "payment_method": p_method,
@@ -196,7 +204,21 @@ def add_batch_transactions(items: List[Dict[str, Any]]) -> int:
     """Thêm nhiều giao dịch cùng lúc vào Google Sheets."""
     if not items:
         return 0
-    res = _call_sheets_api(payload={"action": "add", "data": items})
+
+    valid_items = []
+    for it in items:
+        try:
+            amt = int(it.get("amount", 0) or 0)
+            if amt > 0:
+                it["amount"] = amt
+                valid_items.append(it)
+        except (ValueError, TypeError):
+            continue
+
+    if not valid_items:
+        return 0
+
+    res = _call_sheets_api(payload={"action": "add", "data": valid_items})
     if res and res.get("status") == "success":
         return res.get("count", len(items))
     return 0
