@@ -108,7 +108,7 @@ def process_telegram_update(update: dict):
     # ==========================================
     # 1. CÁC LỆNH HỆ THỐNG & TRUY VẤN TÀI CHÍNH
     # ==========================================
-    if text == "/start" or text == "/help":
+    if text == "/start":
         welcome = (
             f"👋 *Xin chào {user.get('first_name', '')}! Tôi là Trợ Lý Kế Toán Phòng Khám Nha Khoa.*\n\n"
             "💡 *CÁCH GHI THU CHI NHANH (3 GIÂY):*\n"
@@ -127,11 +127,51 @@ def process_telegram_update(update: dict):
             "• /ds : Xem 10 giao dịch vừa nhập gần nhất\n"
             "• `/xoa <id>` : Xóa giao dịch nếu nhập nhầm (VD: `/xoa 5`)\n"
             "• /sheet : Mở trực tiếp Sổ Quỹ Google Sheets online (mỗi năm 1 tab riêng)\n"
-            "• `/hoc <từ khóa> = <thu/chi>: <danh mục>` : Dạy từ mới cho AI\n\n"
+            "• /help : Xem cẩm nang hướng dẫn sử dụng chi tiết nhất\n\n"
             "🛡️ *ĐỐI SOÁT & CHỐNG TRÙNG LẶP:* Cuối tháng gửi file sao kê ngân hàng (.xlsx/.csv), hệ thống tự động nhận diện và bỏ qua các khoản đã nhập qua giọng nói/tin nhắn trước đó!\n\n"
             f"🆔 *Telegram ID của bạn:* `{user_id}`"
         )
         send_telegram_message(chat_id, welcome)
+
+    elif text == "/help":
+        help_msg = (
+            "📖 *CẨM NANG HƯỚNG DẪN SỬ DỤNG BOT KẾ TOÁN NHA KHOA*\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "⚡ *1. GHI NHẬN THU CHI NHANH (3 CÁCH):*\n\n"
+            "• 💬 *Nhắn tin văn bản:*\n"
+            "  - `+ 500k tram rang` ➡️ Thu tiền mặt\n"
+            "  - `+ 2tr ck khach Trang boc su` ➡️ Thu chuyển khoản\n"
+            "  - `- 70k hoa qua thap huong` ➡️ Chi tiền mặt\n"
+            "  - `- 1.2tr ck labo rang su chi Nga` ➡️ Chi chuyển khoản\n\n"
+            "• 🎙 *Giọng nói (Voice):* Giữ nút Micro nói tự nhiên:\n"
+            "  - *\"Thu chị Quỳnh 500k khám răng\"*\n"
+            "  - *\"Chi 150 nghìn mua găng tay y tế\"*\n"
+            "  ➡️ Gemini AI tự nhận diện lời thoại và lưu ngay vào Google Sheets!\n\n"
+            "• 📸 *Ảnh chụp hóa đơn:* Chụp ảnh phiếu thu/hóa đơn gửi vào bot để AI quét tự động.\n\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "📊 *2. CÁC LỆNH BÁO CÁO & TRA CỨU TÀI CHÍNH:*\n\n"
+            "• /today : Xem nhanh tổng kết thu chi hôm nay.\n"
+            "• `/ngay [dd/mm hoặc dd/mm/yyyy]` : Xem thu chi và danh sách giao dịch ngày chỉ định.\n"
+            "  ↳ *Ví dụ:* `/ngay 13/10` hoặc `/ngay 13/10/2026`\n"
+            "• `/khoang <từ ngày> <đến ngày>` : Xem thu chi theo khoảng thời gian bất kỳ.\n"
+            "  ↳ *Ví dụ:* `/khoang 01/10 14/10` hoặc `/khoang 01/10/2026 14/10/2026`\n"
+            "• `/thang [mm/yyyy hoặc mm]` : Báo cáo doanh thu, chi phí, lợi nhuận ròng của tháng.\n"
+            "  ↳ *Ví dụ:* `/thang 9` hoặc `/thang 10/2026`\n"
+            "• `/nam [yyyy]` : Báo cáo tài chính cả năm & bảng kết quả từng tháng (T01 ➔ T12).\n"
+            "  ↳ *Ví dụ:* `/nam 2026` hoặc `/nam`\n"
+            "• /ds : Xem 10 giao dịch vừa nhập gần nhất.\n"
+            "• `/xoa <id>` : Xóa giao dịch nếu nhập nhầm (Ví dụ: `/xoa 12`).\n\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🛡️ *3. ĐỐI SOÁT SAO KÊ & CHỐNG TRÙNG LẶP:*\n\n"
+            "• Cuối tháng, bạn gửi file Excel (`.xlsx`, `.xls`) hoặc `.csv` sao kê ngân hàng vào bot.\n"
+            "• Hệ thống tích hợp **Deduplication Engine**: Tự động so khớp số tiền, ngày, phương thức chuyển khoản và từ khóa diễn giải để **bỏ qua các giao dịch đã nhập qua giọng nói/tin nhắn trước đó**, tuyệt đối không bị cộng dồn doanh thu 2 lần!\n\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "⚙️ *4. QUẢN TRỊ & TIỆN ÍCH:*\n\n"
+            "• /sheet : Mở trực tiếp Sổ Quỹ Google Sheets online (mỗi năm 1 tab riêng).\n"
+            "• `/hoc <từ khóa> = <thu/chi>: <danh mục>` : Dạy từ mới cho AI.\n"
+            "• /id : Xem Telegram User ID của bạn để cấu hình bảo mật."
+        )
+        send_telegram_message(chat_id, help_msg)
 
     elif text == "/id":
         msg = (
