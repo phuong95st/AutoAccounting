@@ -8,14 +8,25 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Tuple, Optional, Union
 
-import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
+OPENPYXL_LOADED = False
+OPENPYXL_ERROR = None
+try:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    OPENPYXL_LOADED = True
+except Exception as e:
+    openpyxl = None
+    OPENPYXL_ERROR = f"{type(e).__name__}: {e}"
 
+XLRD_LOADED = False
+XLRD_ERROR = None
 try:
     import xlrd
-except ImportError:
+    XLRD_LOADED = True
+except Exception as e:
     xlrd = None
+    XLRD_ERROR = f"{type(e).__name__}: {e}"
 
 PYPDF_LOADED = False
 PYPDF_ERROR = None
@@ -53,12 +64,18 @@ from ai_parser import GeminiParser, RuleEngine, rules_mgr, remove_accents
 from config import REPORTS_DIR, DATA_DIR
 
 def clean_statement_num(v: Any) -> int:
-    """Chuyển đổi số tiền trong sao kê sang số nguyên dương."""
+    """Chuyển đổi số tiền trong sao kê sang số nguyên dương, xử lý chính xác phần thập phân / đơn vị tiền tệ."""
     if not v:
         return 0
     if isinstance(v, (int, float)):
         return int(abs(v))
-    s = str(v).replace(',', '').replace('.', '').replace('VND', '').replace('đ', '').replace('+', '').strip()
+    s = str(v).replace('VND', '').replace('vnd', '').replace('VNĐ', '').replace('vnđ', '').replace('đ', '').replace('+', '').strip()
+
+    # Bỏ phần thập phân nếu có (VD: .00 hoặc ,00 ở cuối)
+    if re.search(r'[\.,]\d{1,2}$', s):
+        s = re.sub(r'[\.,]\d{1,2}$', '', s)
+
+    s = s.replace(',', '').replace('.', '').replace(' ', '').strip()
     try:
         return int(abs(float(s)))
     except Exception:
@@ -114,11 +131,23 @@ class BankStatementParser:
 
         # 2. EXCEL HIỆN ĐẠI .XLSX
         elif ext == ".xlsx":
-            return cls.parse_excel_statement(file_path), None, "xlsx_parsed"
+            if not OPENPYXL_LOADED:
+                return [], "OPENPYXL_MISSING", f"Thư viện openpyxl chưa được nạp: {OPENPYXL_ERROR}"
+            try:
+                items = cls.parse_excel_statement(file_path)
+                return items, None, f"xlsx_parsed: {len(items)} items"
+            except Exception as e:
+                return [], "EXCEL_PARSE_ERROR", f"Lỗi đọc file .xlsx: {type(e).__name__}({e})"
 
         # 3. EXCEL CŨ .XLS
         elif ext == ".xls":
-            return cls.parse_xls_statement(file_path), None, "xls_parsed"
+            if not XLRD_LOADED:
+                return [], "XLRD_MISSING", f"Thư viện xlrd chưa được nạp: {XLRD_ERROR}"
+            try:
+                items = cls.parse_xls_statement(file_path)
+                return items, None, f"xls_parsed: {len(items)} items"
+            except Exception as e:
+                return [], "XLS_PARSE_ERROR", f"Lỗi đọc file .xls: {type(e).__name__}({e})"
 
         # 4. TÀI LIỆU .PDF
         elif ext == ".pdf":
@@ -127,7 +156,11 @@ class BankStatementParser:
 
         # 5. DỮ LIỆU .CSV
         elif ext == ".csv":
-            return cls.parse_csv_statement(file_path), None, "csv_parsed"
+            try:
+                items = cls.parse_csv_statement(file_path)
+                return items, None, f"csv_parsed: {len(items)} items"
+            except Exception as e:
+                return [], "CSV_PARSE_ERROR", f"Lỗi đọc file .csv: {type(e).__name__}({e})"
 
         return [], "UNSUPPORTED_FORMAT", f"Định dạng {ext} không được hỗ trợ"
 
@@ -253,77 +286,101 @@ class BankStatementParser:
         return extracted_files, None, debug_summary
 
     @staticmethod
-    def parse_excel_statement(file_path: Path) -> List[Dict[str, Any]]:
-        """Phân tích sao kê ngân hàng định dạng .xlsx bằng openpyxl."""
-        wb = openpyxl.load_workbook(file_path, data_only=True)
-        sheet = wb.active
-
-        header_row_idx = None
+    def _detect_statement_columns(headers: List[str]) -> Tuple[Optional[int], Optional[int], Optional[int], Optional[int], Optional[int], Optional[int]]:
+        """
+        Nhận diện thông minh các chỉ số cột:
+        Returns: (col_date, col_desc, col_in, col_out, col_amount, col_type)
+        """
         col_date = None
         col_desc = None
         col_in = None
         col_out = None
         col_amount = None
+        col_type = None
+
+        for c_idx, raw_h in enumerate(headers):
+            val = remove_accents(str(raw_h or '')).lower().strip()
+            if not val:
+                continue
+            if any(k in val for k in ['ngay', 'date', 'thoi gian', 'tgian', 'posting date', 'trans date']) and col_date is None:
+                col_date = c_idx
+            elif any(k in val for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung', 'ghi chu', 'remark', 'thong tin', 'memo', 'details']) and col_desc is None:
+                col_desc = c_idx
+            elif any(k in val for k in ['ghi co', 'tien vao', 'phat sinh tang', 'credit', 'co (+)', 'co(+)', 'phat sinh co']):
+                col_in = c_idx
+            elif any(k in val for k in ['ghi no', 'tien ra', 'phat sinh giam', 'debit', 'no (-)', 'no(-)', 'phat sinh no']):
+                col_out = c_idx
+            elif any(k in val for k in ['loai gd', 'loai giao dich', 'cr/dr', 'd/c', 'type', 'loai', 'chieu gd']) and col_type is None:
+                col_type = c_idx
+            elif any(k in val for k in ['so tien', 'sotien', 'amount', 'phat sinh', 'tong tien', 'so tien gd']) and col_amount is None:
+                col_amount = c_idx
+
+        return col_date, col_desc, col_in, col_out, col_amount, col_type
+
+    @classmethod
+    def parse_excel_statement(cls, file_path: Path) -> List[Dict[str, Any]]:
+        """Phân tích sao kê ngân hàng định dạng .xlsx bằng openpyxl."""
+        wb = openpyxl.load_workbook(file_path, data_only=True)
+        sheet = wb.active
+
+        header_row_idx = None
+        col_date = col_desc = col_in = col_out = col_amount = col_type = None
 
         for row_idx in range(1, min(25, sheet.max_row + 1)):
-            row_vals = [remove_accents(str(sheet.cell(row=row_idx, column=c).value or '')).lower().strip() for c in range(1, sheet.max_column + 1)]
-            has_date = any(k in v for v in row_vals for k in ['ngay', 'date', 'thoi gian'])
-            has_money = any(k in v for v in row_vals for k in ['tien', 'amount', 'ghi co', 'ghi no', 'phat sinh', 'so du', 'sotien'])
-            has_desc = any(k in v for v in row_vals for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung'])
+            row_vals = [str(sheet.cell(row=row_idx, column=c).value or '') for c in range(1, sheet.max_column + 1)]
+            lowers = [remove_accents(v).lower().strip() for v in row_vals]
+            has_date = any(k in v for v in lowers for k in ['ngay', 'date', 'thoi gian'])
+            has_money = any(k in v for v in lowers for k in ['tien', 'amount', 'ghi co', 'ghi no', 'phat sinh', 'so du', 'sotien'])
+            has_desc = any(k in v for v in lowers for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung', 'ghi chu', 'remark'])
 
             if (has_date and has_money) or (has_date and has_desc):
                 header_row_idx = row_idx
-                for col_idx, val in enumerate(row_vals, start=1):
-                    if any(k in val for k in ['ngay', 'date', 'thoi gian']) and not col_date:
-                        col_date = col_idx
-                    elif any(k in val for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung']) and not col_desc:
-                        col_desc = col_idx
-                    elif any(k in val for k in ['ghi co', 'tien vao', 'phat sinh tang', 'credit', 'thu', 'nhan']):
-                        col_in = col_idx
-                    elif any(k in val for k in ['ghi no', 'tien ra', 'phat sinh giam', 'debit', 'chi', 'gui']):
-                        col_out = col_idx
-                    elif any(k in val for k in ['so tien', 'sotien', 'amount', 'phat sinh']) and not col_amount:
-                        col_amount = col_idx
+                col_date, col_desc, col_in, col_out, col_amount, col_type = cls._detect_statement_columns(row_vals)
                 break
 
         if not header_row_idx:
             header_row_idx = 1
-            col_date = 1
-            col_desc = 2
-            col_in = 3
-            col_out = 4
+            col_date, col_desc, col_in, col_out = 0, 1, 2, 3
 
         results = []
         for r in range(header_row_idx + 1, sheet.max_row + 1):
-            date_val = sheet.cell(row=r, column=col_date).value if col_date else None
-            desc_val = sheet.cell(row=r, column=col_desc).value if col_desc else ''
+            date_val = sheet.cell(row=r, column=col_date + 1).value if col_date is not None else None
+            desc_val = sheet.cell(row=r, column=col_desc + 1).value if col_desc is not None else ''
 
             if not date_val and not desc_val:
                 continue
 
-            date_str = ""
-            if isinstance(date_val, datetime):
-                date_str = date_val.strftime("%Y-%m-%d")
-            elif date_val:
-                date_str = database.parse_vn_date(str(date_val).strip())
-
+            date_str = database.parse_vn_date(date_val)
             desc_clean = str(desc_val or '').strip()
             amt_in = 0
             amt_out = 0
 
-            if col_in and col_out:
-                amt_in = clean_statement_num(sheet.cell(row=r, column=col_in).value)
-                amt_out = clean_statement_num(sheet.cell(row=r, column=col_out).value)
-            elif col_amount:
-                val = sheet.cell(row=r, column=col_amount).value
-                num = clean_statement_num(val)
-                try:
-                    if float(str(val).replace(',', '')) < 0:
+            if col_in is not None and col_out is not None:
+                amt_in = clean_statement_num(sheet.cell(row=r, column=col_in + 1).value)
+                amt_out = clean_statement_num(sheet.cell(row=r, column=col_out + 1).value)
+            elif col_amount is not None:
+                raw_amt = sheet.cell(row=r, column=col_amount + 1).value
+                num = clean_statement_num(raw_amt)
+                s_amt = str(raw_amt or '').strip()
+                if col_type is not None:
+                    t_str = remove_accents(str(sheet.cell(row=r, column=col_type + 1).value or '')).lower().strip()
+                    if any(k in t_str for k in ['co', 'cr', 'credit', 'thu', 'tang', '+']):
+                        amt_in = num
+                    elif any(k in t_str for k in ['no', 'dr', 'debit', 'chi', 'giam', '-']):
                         amt_out = num
                     else:
                         amt_in = num
-                except Exception:
-                    amt_in = num
+                else:
+                    is_neg = '-' in s_amt or '(' in s_amt
+                    if not is_neg:
+                        try:
+                            is_neg = float(s_amt.replace(',', '')) < 0
+                        except Exception:
+                            pass
+                    if is_neg:
+                        amt_out = num
+                    else:
+                        amt_in = num
 
             if amt_in == 0 and amt_out == 0:
                 continue
@@ -346,53 +403,33 @@ class BankStatementParser:
 
         return results
 
-    @staticmethod
-    def parse_xls_statement(file_path: Path) -> List[Dict[str, Any]]:
+    @classmethod
+    def parse_xls_statement(cls, file_path: Path) -> List[Dict[str, Any]]:
         """Phân tích sao kê ngân hàng định dạng cũ .xls bằng xlrd."""
         if not xlrd:
             return []
 
-        try:
-            wb = xlrd.open_workbook(file_path)
-            sheet = wb.sheet_by_index(0)
-        except Exception as e:
-            print(f"Lỗi đọc file .xls: {e}")
-            return []
+        wb = xlrd.open_workbook(file_path)
+        sheet = wb.sheet_by_index(0)
 
         header_row_idx = None
-        col_date = None
-        col_desc = None
-        col_in = None
-        col_out = None
-        col_amount = None
+        col_date = col_desc = col_in = col_out = col_amount = col_type = None
 
         for row_idx in range(min(25, sheet.nrows)):
-            row_vals = [remove_accents(str(sheet.cell_value(row_idx, c) or '')).lower().strip() for c in range(sheet.ncols)]
-            has_date = any(k in v for v in row_vals for k in ['ngay', 'date', 'thoi gian'])
-            has_money = any(k in v for v in row_vals for k in ['tien', 'amount', 'ghi co', 'ghi no', 'phat sinh', 'so du', 'sotien'])
-            has_desc = any(k in v for v in row_vals for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung'])
+            row_vals = [str(sheet.cell_value(row_idx, c) or '') for c in range(sheet.ncols)]
+            lowers = [remove_accents(v).lower().strip() for v in row_vals]
+            has_date = any(k in v for v in lowers for k in ['ngay', 'date', 'thoi gian'])
+            has_money = any(k in v for v in lowers for k in ['tien', 'amount', 'ghi co', 'ghi no', 'phat sinh', 'so du', 'sotien'])
+            has_desc = any(k in v for v in lowers for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung', 'ghi chu', 'remark'])
 
             if (has_date and has_money) or (has_date and has_desc):
                 header_row_idx = row_idx
-                for col_idx, val in enumerate(row_vals):
-                    if any(k in val for k in ['ngay', 'date', 'thoi gian']) and col_date is None:
-                        col_date = col_idx
-                    elif any(k in val for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung']) and col_desc is None:
-                        col_desc = col_idx
-                    elif any(k in val for k in ['ghi co', 'tien vao', 'phat sinh tang', 'credit', 'thu', 'nhan']):
-                        col_in = col_idx
-                    elif any(k in val for k in ['ghi no', 'tien ra', 'phat sinh giam', 'debit', 'chi', 'gui']):
-                        col_out = col_idx
-                    elif any(k in val for k in ['so tien', 'sotien', 'amount', 'phat sinh']) and col_amount is None:
-                        col_amount = col_idx
+                col_date, col_desc, col_in, col_out, col_amount, col_type = cls._detect_statement_columns(row_vals)
                 break
 
         if header_row_idx is None:
             header_row_idx = 0
-            col_date = 0
-            col_desc = 1
-            col_in = 2
-            col_out = 3
+            col_date, col_desc, col_in, col_out = 0, 1, 2, 3
 
         results = []
         for r in range(header_row_idx + 1, sheet.nrows):
@@ -403,7 +440,7 @@ class BankStatementParser:
                 continue
 
             date_str = ""
-            if sheet.cell_type(r, col_date) == xlrd.XL_CELL_DATE:
+            if col_date is not None and sheet.cell_type(r, col_date) == xlrd.XL_CELL_DATE:
                 try:
                     dt_tuple = xlrd.xldate_as_tuple(date_val, wb.datemode)
                     date_str = f"{dt_tuple[0]:04d}-{dt_tuple[1]:02d}-{dt_tuple[2]:02d}"
@@ -420,15 +457,28 @@ class BankStatementParser:
                 amt_in = clean_statement_num(sheet.cell_value(r, col_in))
                 amt_out = clean_statement_num(sheet.cell_value(r, col_out))
             elif col_amount is not None:
-                val = sheet.cell_value(r, col_amount)
-                num = clean_statement_num(val)
-                try:
-                    if float(str(val).replace(',', '')) < 0:
+                raw_amt = sheet.cell_value(r, col_amount)
+                num = clean_statement_num(raw_amt)
+                s_amt = str(raw_amt or '').strip()
+                if col_type is not None:
+                    t_str = remove_accents(str(sheet.cell_value(r, col_type) or '')).lower().strip()
+                    if any(k in t_str for k in ['co', 'cr', 'credit', 'thu', 'tang', '+']):
+                        amt_in = num
+                    elif any(k in t_str for k in ['no', 'dr', 'debit', 'chi', 'giam', '-']):
                         amt_out = num
                     else:
                         amt_in = num
-                except Exception:
-                    amt_in = num
+                else:
+                    is_neg = '-' in s_amt or '(' in s_amt
+                    if not is_neg:
+                        try:
+                            is_neg = float(s_amt.replace(',', '')) < 0
+                        except Exception:
+                            pass
+                    if is_neg:
+                        amt_out = num
+                    else:
+                        amt_in = num
 
             if amt_in == 0 and amt_out == 0:
                 continue
@@ -451,57 +501,52 @@ class BankStatementParser:
 
         return results
 
-    @staticmethod
-    def parse_csv_statement(file_path: Path) -> List[Dict[str, Any]]:
-        """Phân tích sao kê ngân hàng định dạng .csv."""
-        results = []
-        try:
-            with open(file_path, "r", encoding="utf-8-sig", errors="replace") as f:
-                reader = csv.reader(f)
-                rows = list(reader)
-        except Exception:
+    @classmethod
+    def parse_csv_statement(cls, file_path: Path) -> List[Dict[str, Any]]:
+        """Phân tích sao kê ngân hàng định dạng .csv (tự động nhận diện dấu phân cách và bảng mã)."""
+        raw_text = None
+        for enc in ["utf-8-sig", "utf-8", "cp1258", "latin1"]:
             try:
-                with open(file_path, "r", encoding="cp1258", errors="replace") as f:
-                    reader = csv.reader(f)
-                    rows = list(reader)
-            except Exception as e:
-                print(f"Lỗi đọc file .csv: {e}")
-                return []
+                raw_text = file_path.read_text(encoding=enc)
+                break
+            except Exception:
+                continue
+
+        if not raw_text:
+            return []
+
+        # Tự động nhận diện dấu phân tách (; , hoặc \t)
+        first_lines = [l for l in raw_text.splitlines()[:5] if l.strip()]
+        sample = "\n".join(first_lines) if first_lines else ""
+        counts = {
+            ';': sample.count(';'),
+            ',': sample.count(','),
+            '\t': sample.count('\t')
+        }
+        delim = max(counts, key=counts.get) if sample and max(counts.values()) > 0 else ','
+
+        import io
+        reader = csv.reader(io.StringIO(raw_text), delimiter=delim)
+        rows = list(reader)
 
         header_idx = None
-        col_date = None
-        col_desc = None
-        col_in = None
-        col_out = None
-        col_amount = None
+        col_date = col_desc = col_in = col_out = col_amount = col_type = None
 
         for idx, row in enumerate(rows[:25]):
             lowers = [remove_accents(c).lower().strip() for c in row]
             has_date = any(k in v for v in lowers for k in ['ngay', 'date', 'thoi gian'])
             has_money = any(k in v for v in lowers for k in ['tien', 'amount', 'ghi co', 'ghi no', 'phat sinh', 'so du', 'sotien'])
-            has_desc = any(k in v for v in lowers for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung'])
+            has_desc = any(k in v for v in lowers for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung', 'ghi chu', 'remark'])
             if (has_date and has_money) or (has_date and has_desc):
                 header_idx = idx
-                for c_idx, val in enumerate(lowers):
-                    if any(k in val for k in ['ngay', 'date', 'thoi gian']) and col_date is None:
-                        col_date = c_idx
-                    elif any(k in val for k in ['noi dung', 'dien giai', 'mo ta', 'description', 'chi tiet', 'noidung']) and col_desc is None:
-                        col_desc = c_idx
-                    elif any(k in val for k in ['ghi co', 'tien vao', 'phat sinh tang', 'credit', 'thu', 'nhan']):
-                        col_in = c_idx
-                    elif any(k in val for k in ['ghi no', 'tien ra', 'phat sinh giam', 'debit', 'chi', 'gui']):
-                        col_out = c_idx
-                    elif any(k in val for k in ['so tien', 'sotien', 'amount', 'phat sinh']) and col_amount is None:
-                        col_amount = c_idx
+                col_date, col_desc, col_in, col_out, col_amount, col_type = cls._detect_statement_columns(row)
                 break
 
         if header_idx is None:
             header_idx = 0
-            col_date = 0
-            col_desc = 1
-            col_in = 2
-            col_out = 3
+            col_date, col_desc, col_in, col_out = 0, 1, 2, 3
 
+        results = []
         for row in rows[header_idx + 1:]:
             if not row or len(row) <= max(col_date or 0, col_desc or 0):
                 continue
@@ -512,16 +557,35 @@ class BankStatementParser:
                 continue
 
             date_str = database.parse_vn_date(date_raw)
-            amt_in = clean_statement_num(row[col_in]) if col_in is not None and col_in < len(row) else 0
-            amt_out = clean_statement_num(row[col_out]) if col_out is not None and col_out < len(row) else 0
+            amt_in = 0
+            amt_out = 0
 
-            if amt_in == 0 and amt_out == 0 and col_amount is not None and col_amount < len(row):
-                val = row[col_amount]
-                num = clean_statement_num(val)
-                if '-' in val:
-                    amt_out = num
+            if col_in is not None and col_out is not None and col_in < len(row) and col_out < len(row):
+                amt_in = clean_statement_num(row[col_in])
+                amt_out = clean_statement_num(row[col_out])
+            elif col_amount is not None and col_amount < len(row):
+                raw_amt = row[col_amount]
+                num = clean_statement_num(raw_amt)
+                s_amt = str(raw_amt or '').strip()
+                if col_type is not None and col_type < len(row):
+                    t_str = remove_accents(row[col_type]).lower().strip()
+                    if any(k in t_str for k in ['co', 'cr', 'credit', 'thu', 'tang', '+']):
+                        amt_in = num
+                    elif any(k in t_str for k in ['no', 'dr', 'debit', 'chi', 'giam', '-']):
+                        amt_out = num
+                    else:
+                        amt_in = num
                 else:
-                    amt_in = num
+                    is_neg = '-' in s_amt or '(' in s_amt
+                    if not is_neg:
+                        try:
+                            is_neg = float(s_amt.replace(',', '')) < 0
+                        except Exception:
+                            pass
+                    if is_neg:
+                        amt_out = num
+                    else:
+                        amt_in = num
 
             if amt_in == 0 and amt_out == 0:
                 continue

@@ -447,6 +447,109 @@ class TestAutoAccountingV2Release(unittest.TestCase):
         finally:
             rules_mgr.set_statement_password(original_pwd)
 
+    def test_13_multi_format_statement_parsing(self):
+        """Kiểm thử toàn diện các định dạng sao kê: .xlsx (đa cột), .csv (dấu phẩy, chấm phẩy, tab), và .zip."""
+        import tempfile
+        import openpyxl
+        import zipfile
+        from bank_reconciler import BankStatementParser
+
+        with tempfile.TemporaryDirectory(prefix="test_stmt_formats_") as tmp_dir:
+            tmp_path = Path(tmp_dir)
+
+            # A. Test .xlsx với 2 cột Thu/Chi riêng biệt
+            wb1 = openpyxl.Workbook()
+            ws1 = wb1.active
+            ws1.append(["Ngày", "Diễn giải", "Ghi có (+)", "Ghi nợ (-)"])
+            ws1.append(["14/10/2026", "Khach hang A tram rang", 1500000, None])
+            ws1.append(["14/10/2026", "Mua vat tu y te", None, 350000])
+            p_xlsx1 = tmp_path / "statement_split.xlsx"
+            wb1.save(p_xlsx1)
+
+            res1, err1, diag1 = BankStatementParser.parse_statement_file(p_xlsx1)
+            self.assertIsNone(err1)
+            self.assertEqual(len(res1), 2)
+            self.assertEqual(res1[0]["type"], "thu")
+            self.assertEqual(res1[0]["amount"], 1500000)
+            self.assertEqual(res1[1]["type"], "chi")
+            self.assertEqual(res1[1]["amount"], 350000)
+
+            # B. Test .xlsx với 1 cột số tiền duy nhất (dấu âm thể hiện chi)
+            wb2 = openpyxl.Workbook()
+            ws2 = wb2.active
+            ws2.append(["Posting Date", "Description", "Amount"])
+            ws2.append(["2026-10-12", "Boc rang su chi Mai", "2,500,000.00"])
+            ws2.append(["2026-10-13", "Tien dien phong kham", "-1,200,000.00"])
+            p_xlsx2 = tmp_path / "statement_single_amt.xlsx"
+            wb2.save(p_xlsx2)
+
+            res2, err2, diag2 = BankStatementParser.parse_statement_file(p_xlsx2)
+            self.assertIsNone(err2)
+            self.assertEqual(len(res2), 2)
+            self.assertEqual(res2[0]["type"], "thu")
+            self.assertEqual(res2[0]["amount"], 2500000)
+            self.assertEqual(res2[1]["type"], "chi")
+            self.assertEqual(res2[1]["amount"], 1200000)
+
+            # C. Test .xlsx với cột chỉ thị CR/DR
+            wb3 = openpyxl.Workbook()
+            ws3 = wb3.active
+            ws3.append(["Ngày giao dịch", "Loại GD", "Số tiền", "Nội dung"])
+            ws3.append(["10/10/2026", "CR", "800.000", "Thu phi lay cao rang"])
+            ws3.append(["11/10/2026", "DR", "200.000", "Chi tien grab ship thuoc"])
+            p_xlsx3 = tmp_path / "statement_cr_dr.xlsx"
+            wb3.save(p_xlsx3)
+
+            res3, err3, diag3 = BankStatementParser.parse_statement_file(p_xlsx3)
+            self.assertIsNone(err3)
+            self.assertEqual(len(res3), 2)
+            self.assertEqual(res3[0]["type"], "thu")
+            self.assertEqual(res3[0]["amount"], 800000)
+            self.assertEqual(res3[1]["type"], "chi")
+            self.assertEqual(res3[1]["amount"], 200000)
+
+            # D. Test .csv phân tách bằng dấu chấm phẩy (;) và UTF-8 BOM
+            p_csv_semi = tmp_path / "statement_semi.csv"
+            p_csv_semi.write_text(
+                "Ngày;Diễn giải;Tiền vào;Tiền ra\n"
+                "14/10/2026;Kham rang chi Nga;500.000,00;\n"
+                "14/10/2026;Mua gang tay y te;;150.000,00\n",
+                encoding="utf-8-sig"
+            )
+            res_semi, err_semi, _ = BankStatementParser.parse_statement_file(p_csv_semi)
+            self.assertIsNone(err_semi)
+            self.assertEqual(len(res_semi), 2)
+            self.assertEqual(res_semi[0]["type"], "thu")
+            self.assertEqual(res_semi[0]["amount"], 500000)
+            self.assertEqual(res_semi[1]["type"], "chi")
+            self.assertEqual(res_semi[1]["amount"], 150000)
+
+            # E. Test .csv phân tách bằng tab (\t)
+            p_csv_tab = tmp_path / "statement_tab.csv"
+            p_csv_tab.write_text(
+                "Date\tDescription\tAmount\tType\n"
+                "2026-10-01\tThu tien vien phi\t3000000.00\tCó\n"
+                "2026-10-02\tChi mua thuoc\t750000.00\tNợ\n",
+                encoding="utf-8"
+            )
+            res_tab, err_tab, _ = BankStatementParser.parse_statement_file(p_csv_tab)
+            self.assertIsNone(err_tab)
+            self.assertEqual(len(res_tab), 2)
+            self.assertEqual(res_tab[0]["type"], "thu")
+            self.assertEqual(res_tab[0]["amount"], 3000000)
+            self.assertEqual(res_tab[1]["type"], "chi")
+            self.assertEqual(res_tab[1]["amount"], 750000)
+
+            # F. Test .zip chứa đa tập tin bảng tính (.xlsx + .csv)
+            p_zip = tmp_path / "bundle.zip"
+            with zipfile.ZipFile(p_zip, "w") as zf:
+                zf.write(p_xlsx1, arcname="sheet1.xlsx")
+                zf.write(p_csv_semi, arcname="sheet2.csv")
+
+            res_zip, err_zip, _ = BankStatementParser.parse_statement_file(p_zip)
+            self.assertIsNone(err_zip)
+            self.assertEqual(len(res_zip), 4)
+
 if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("🚀 BẮT ĐẦU CHẠY SUITE KIỂM THỬ TỔNG THỂ CHO BẢN PHÁT HÀNH v2.0")

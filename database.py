@@ -34,6 +34,11 @@ def parse_vn_date(val: Any) -> str:
     """Normalize date string to YYYY-MM-DD in Vietnam timezone."""
     if not val:
         return datetime.now(TZ_VN).strftime("%Y-%m-%d")
+    if hasattr(val, "strftime"):
+        try:
+            return val.strftime("%Y-%m-%d")
+        except Exception:
+            pass
     s = str(val).strip()
     if "T" in s and s.endswith("Z"):
         try:
@@ -41,13 +46,25 @@ def parse_vn_date(val: Any) -> str:
             return dt.strftime("%Y-%m-%d")
         except Exception:
             pass
-    if re.match(r'^\d{4}-\d{2}-\d{2}', s):
-        return s[:10]
-    # Check DD/MM/YYYY or DD-MM-YYYY
-    m = re.match(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{4})', s)
+
+    # YYYY-MM-DD or YYYY/MM/DD or YYYY.MM.DD
+    m_iso = re.match(r'^(\d{4})[/\-\.](\d{1,2})[/\-\.](\d{1,2})', s)
+    if m_iso:
+        y, m_val, d = int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3))
+        return f"{y:04d}-{m_val:02d}-{d:02d}"
+
+    # DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY (also DD/MM/YY, DD-MM-YY, DD.MM.YY)
+    m = re.match(r'^(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{2,4})', s)
     if m:
         d, m_val, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if y < 100:
+            y += 2000
         return f"{y:04d}-{m_val:02d}-{d:02d}"
+
+    # YYYYMMDD (8 digits continuous)
+    if len(s) >= 8 and s[:8].isdigit() and (s.startswith("20") or s.startswith("19")):
+        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+
     return s[:10]
 
 def parse_vn_time(val: Any) -> str:

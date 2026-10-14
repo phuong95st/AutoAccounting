@@ -3,7 +3,10 @@
     "api/**/*.py": {
       "includeFiles": [
         "data/**",
-        "pypdf/**"
+        "pypdf/**",
+        "xlrd/**",
+        "openpyxl/**",
+        "et_xmlfile/**"
       ]
     }
   }
