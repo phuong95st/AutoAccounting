@@ -1,3 +1,4 @@
+from __future__ import annotations
 import re
 import csv
 import zipfile
@@ -5,7 +6,7 @@ import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List, Any, Tuple, Optional, Union
 
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side

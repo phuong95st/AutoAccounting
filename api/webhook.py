@@ -1,3 +1,4 @@
+from __future__ import annotations
 import json
 import urllib.request
 import urllib.parse
@@ -14,6 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
 STARTUP_ERROR = None
+BankStatementParser = None
 try:
     import config
     import database
@@ -526,6 +528,14 @@ def process_telegram_update(update: dict):
         try:
             with open(temp_path, "wb") as f:
                 f.write(doc_bytes)
+
+            global BankStatementParser
+            if BankStatementParser is None:
+                try:
+                    from bank_reconciler import BankStatementParser
+                except Exception as e:
+                    send_telegram_message(chat_id, f"❌ Không thể nạp module phân tích sao kê: {e}")
+                    return
 
             candidate_pwd = extract_password_from_caption(caption)
             items, err_code = BankStatementParser.parse_statement_file(temp_path, password=candidate_pwd)
