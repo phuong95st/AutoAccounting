@@ -62,16 +62,26 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show current user's Telegram ID."""
+    """Show current user's Telegram ID and system status."""
     user = update.effective_user
     chat = update.effective_chat
-    await update.message.reply_text(
-        f"🆔 *THÔNG TIN TÀI KHOẢN:*\n"
+    from bank_reconciler import PYZIPPER_LOADED, PYZIPPER_ERROR
+    saved_pwd = rules_mgr.get_statement_password()
+    masked_pwd = saved_pwd[:2] + "*" * (len(saved_pwd) - 4) + saved_pwd[-2:] if len(saved_pwd) > 4 else ("(chưa cài)" if not saved_pwd else "••••")
+    pyz_status = "✅ Sẵn sàng (AES-256 OK)" if PYZIPPER_LOADED else f"❌ Chưa nạp ({PYZIPPER_ERROR})"
+    msg = (
+        f"🆔 *THÔNG TIN HỆ THỐNG & TÀI KHOẢN:*\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
         f"• User ID của bạn: `{user.id}`\n"
-        f"• Chat ID: `{chat.id}`\n\n"
-        f"_(Nếu muốn bảo mật chỉ cho phép một mình bạn dùng bot, hãy dán ID `{user.id}` vào biến `ALLOWED_TELEGRAM_USERS` trong file `.env`)_",
-        parse_mode=ParseMode.MARKDOWN
+        f"• Chat ID: `{chat.id}`\n"
+        f"• Môi trường: `Python {sys.version.split()[0]} ({sys.platform})`\n"
+        f"• Giải mã AES-256 (pyzipper): {pyz_status}\n"
+        f"• Mật khẩu sao kê đã lưu: `{masked_pwd}`\n"
+        f"• Google Sheets Webhook: {'✅ Đã gắn' if config.GOOGLE_SHEETS_WEBHOOK_URL else '❌ Chưa gắn'}\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"_(Nếu muốn bảo mật, dán ID `{user.id}` vào biến `ALLOWED_TELEGRAM_USERS` trong cài đặt Vercel hoặc file `.env`)_"
     )
+    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Detailed manual and command syntax reference."""
